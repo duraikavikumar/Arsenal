@@ -33,6 +33,12 @@ init_dirs() {
     touch "$LOG_FILE"
 }
 
+log() {
+    local color="$1" msg="$2" ts; ts="[$(date '+%Y-%m-%d %H:%M:%S')]"
+    echo -e "${color}${ts} ${msg}${NC}"
+    echo "${ts} ${msg}" | sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE"
+}
+
 log_and_print() {
     local color="$1"
     local message="$2"
@@ -126,14 +132,14 @@ create_global_snapshot() {
     fi
     apt-mark showhold > "${snap_dir}/global_holds.txt"
     echo "Reason: $reason" > "${snap_dir}/info.txt"
-    log_and_print "$CYN" "Snapshot saved: $ts"
+    log "$CYN" "Snapshot saved: $ts"
 }
 
 revert_global_snapshot() {
     local snap_id="$1"
     local target_dir="${SNAP_DIR}/${snap_id}"
-    if [[ ! -d "$target_dir" ]]; then log_and_print "$RED" "Snapshot not found."; return; fi
-    log_and_print "$YLW" "Rolling back system to $snap_id..."
+    if [[ ! -d "$target_dir" ]]; then log "$RED" "Snapshot not found."; return; fi
+    log "$YLW" "Rolling back system to $snap_id..."
     rm -f "${PREF_DIR}/"* 2>/dev/null
     apt-mark unhold "$(apt-mark showhold)" >/dev/null 2>&1
     if [[ ! -f "${target_dir}/_empty_marker" ]]; then
@@ -143,7 +149,7 @@ revert_global_snapshot() {
     if [[ -s "${target_dir}/global_holds.txt" ]]; then
         xargs -a "${target_dir}/global_holds.txt" apt-mark hold >/dev/null 2>&1
     fi
-    log_and_print "$GRN" "System restored."
+    log "$GRN" "System restored."
 }
 
 save_transaction() {
@@ -174,11 +180,11 @@ revert_single_transaction() {
     local trans_id="$1"
     local trans_file="${TRANS_DIR}/${trans_id}.state"
     if [[ ! -f "$trans_file" ]]; then
-        log_and_print "$RED" "Transaction not found."
+        log "$RED" "Transaction not found."
         return
     fi
     source "$trans_file"
-    log_and_print "$YLW" "Reverting $PACKAGE..."
+    log "$YLW" "Reverting $PACKAGE..."
     if [[ "$PREV_HOLD" == "hold" ]]; then
         apt-mark hold "$PACKAGE" >/dev/null
     else
@@ -189,7 +195,7 @@ revert_single_transaction() {
         echo "$PREV_PREF_CONTENT" | base64 -d > "${PREF_DIR}/${PREV_PREF_NAME}"
     fi
     mv "$trans_file" "${trans_file}.reverted"
-    log_and_print "$GRN" "Done."
+    log "$GRN" "Done."
 }
 
 # --- 3. EXECUTION (LOCK/UNLOCK SESSIONS) ---
@@ -264,12 +270,19 @@ do_lock() {
                 local status="${GRN}Open${NC}"
                 if echo "$held_packages" | grep -q "^${p_name}$"; then
                     status="${RED}LOCKED${NC}"
+                else 
+                    for f in "${PREF_DIR}/${p_name}"*; do
+                        if [[ -e "$f" ]]; then
+                            status="${RED}LOCKED${NC}"
+                            break
+                        fi
+                    done
                 fi
                 printf "%-6s %-35s %-25s %-10b\n" "[$((i+1))]" "$p_name" "$p_ver" "$status"
             done
             echo "--------------------------------------------------------------------------------"
             echo -e "Showing $((current_idx+1)) to $end_idx of $total_count"
-            read -r -p "Type [ID] to lock, (n)ext, (p)rev, (b)ack to search menu: " choice
+            read -r -p "Type [ID,ID/range] to lock, (n)ext, (p)rev, (b)ack to search menu: " choice
             if [[ "$choice" == "b" ]]; then break; fi
             if [[ "$choice" == "n" && $end_idx -lt $total_count ]]; then
                 current_idx=$((current_idx + page_size))
@@ -279,26 +292,64 @@ do_lock() {
                 current_idx=$((current_idx - page_size))
                 continue
             fi
-            if [[ "$choice" =~ ^[0-9]+$ ]]; then
-                local real_idx=$((choice - 1))
-                if [[ $real_idx -ge 0 && $real_idx -lt $total_count ]]; then
-                    local pkg_to_lock; pkg_to_lock=$(echo "${ALL_PKGS[$real_idx]}" | awk '{print $1}')
-                    if echo "$held_packages" | grep -q "^${pkg_to_lock}$"; then
-                        log_and_print "$YLW" "'$pkg_to_lock' is already locked."
-                        sleep 1.5
-                        continue
-                    fi
-                    local confirmation_response
-                    prompt_with_timer confirmation_response "Confirm locking '${pkg_to_lock}'?" "$PROMPT_TIMEOUT" "y"
-                    if [[ "$confirmation_response" =~ ^[Yy]$ ]]; then
-                        create_global_snapshot "Pre-Lock $pkg_to_lock"; save_transaction "$pkg_to_lock" "LOCK"
-                        local ver; ver=$(dpkg-query -W -f='${Version}' "$pkg_to_lock")
-                        echo -e "Package: $pkg_to_lock\nPin: version $ver\nPin-Priority: 1001" > "${PREF_DIR}/${pkg_to_lock}.pref"
-                        log_and_print "$GRN" "LOCKED: $pkg_to_lock @ $ver"; echo -e "${GRN}Locked. Refreshing...${NC}"; sleep 1.5
+            local parsed_ids=(); local has_invalid_input=false; IFS=',' read -ra ADDR <<< "$choice"
+            for item in "${ADDR[@]}"; do
+                item=$(echo "$item" | xargs); if [[ "$item" =~ ^[0-9]+-[0-9]+$ ]]; then
+                    IFS='-' read -ra RANGE_BOUNDS <<< "$item"
+                    local start_id=${RANGE_BOUNDS[0]}
+                    local end_id=${RANGE_BOUNDS[1]}
+                    if (( start_id > 0 && end_id > 0 && start_id <= end_id && start_id <= total_count && end_id <= total_count )); then
+                        for (( id=start_id; id<=end_id; id++ )); do parsed_ids+=("$id"); done
                     else
-                        echo -e "${YLW}Locking cancelled for '$pkg_to_lock'. Refreshing list...${NC}"; sleep 1.5
+                        echo -e "${RED}Invalid range: $item. Must be within 1-$total_count. Skipping this item.${NC}"
+                        has_invalid_input=true
                     fi
-                else echo -e "${RED}Invalid ID.${NC}"; sleep 1; fi
+                elif [[ "$item" =~ ^[0-9]+$ ]]; then
+                    if (( item > 0 && item <= total_count )); then
+                        parsed_ids+=("$item")
+                    else
+                        echo -e "${RED}Invalid ID: $item. Must be within 1-$total_count. Skipping this item.${NC}"
+                        has_invalid_input=true
+                    fi
+                else
+                    echo -e "${RED}Invalid input format: '$item'. Skipping this item.${NC}"
+                    has_invalid_input=true
+                fi
+            done
+            if $has_invalid_input; then
+                echo -e "${YLW}Some selections were invalid. Please review and re-enter if needed.${NC}"
+                sleep 2
+                continue
+            fi
+            
+            IFS=$'\n' parsed_ids=($(sort -u <<<"${parsed_ids[*]}"))
+            local packages_to_lock_current_batch=(); for id in "${parsed_ids[@]}"; do
+                local pkg_name_from_id; pkg_name_from_id=$(echo "${ALL_PKGS[$((id-1))]}" | awk '{print $1}')
+                if echo "$held_packages" | grep -q "^${pkg_name_from_id}$"; then
+                    echo -e "${YLW}'$pkg_name_from_id' is already locked. Skipping.${NC}"
+                else
+                    packages_to_lock_current_batch+=("$pkg_name_from_id")
+                fi
+            done
+            if [[ ${#packages_to_lock_current_batch[@]} -eq 0 ]]; then
+                echo -e "${YLW}No new packages selected for locking, or all selected were already locked.${NC}"
+                sleep 2
+                continue
+            fi
+            local packages_string_for_prompt; packages_string_for_prompt=$(IFS=', '; echo "${packages_to_lock_current_batch[*]}")
+            local confirmation_response
+            prompt_with_timer confirmation_response "Confirm locking ${#packages_to_lock_current_batch[@]} \
+package(s): ${packages_string_for_prompt}?" "$PROMPT_TIMEOUT" "y"
+            if [[ "$confirmation_response" =~ ^[Yy]$ ]]; then
+                for pkg_to_lock in "${packages_to_lock_current_batch[@]}"; do
+                    create_global_snapshot "Pre-Lock $pkg_to_lock"; save_transaction "$pkg_to_lock" "LOCK"
+                    local ver; ver=$(dpkg-query -W -f='${Version}' "$pkg_to_lock")
+                    echo -e "Package: $pkg_to_lock\nPin: version $ver\nPin-Priority: 1001" > "${PREF_DIR}/${pkg_to_lock}.pref"
+                    log "$GRN" "LOCKED: $pkg_to_lock @ $ver"
+                done
+                echo -e "${GRN}Selected package(s) locked. Refreshing list...${NC}"; sleep 2
+            else
+                echo -e "${YLW}Locking cancelled for the batch. Refreshing list...${NC}"; sleep 2
             fi
         done
     done
@@ -352,7 +403,7 @@ do_unlock() {
                 create_global_snapshot "Pre-Unlock $pkg_to_unlock"; save_transaction "$pkg_to_unlock" "UNLOCK"
                 rm -f "${PREF_DIR}/${pkg_to_unlock}"*
                 apt-mark unhold "$pkg_to_unlock" > /dev/null
-                log_and_print "$GRN" "UNLOCKED: $pkg_to_unlock"
+                log "$GRN" "UNLOCKED: $pkg_to_unlock"
                 echo -e "${GRN}Unlocked. Refreshing...${NC}"; sleep 1.5
             else echo -e "${RED}Invalid ID.${NC}"; sleep 1; fi
         fi
