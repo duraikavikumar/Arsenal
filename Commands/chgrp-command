@@ -1,0 +1,15 @@
+# To Change the group ownership of the files and directory directly #
+
+chgrp [OPTIONS] GROUP FILE(s)
+
+# but there is no command similar for user ownership #
+
+| Option                  | Description                                                |
+| ----------------------- | ---------------------------------------------------------- |
+| `-c, --changes`         | Like verbose but report only when a change is made         |
+| `-f, --silent, --quiet` | Suppress most error messages                               |
+| `-v, --verbose`         | Output a diagnostic for every file processed               |
+| `-R, --recursive`       | Operate on files and directories recursively               |
+| `--reference=RFILE`     | Use group ownership of `RFILE` instead of specifying group |
+| `--help`                | Display help and exit                                      |
+| `--version`             | Output version information and exit                        |

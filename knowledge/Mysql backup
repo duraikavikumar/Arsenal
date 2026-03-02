@@ -1,0 +1,159 @@
+1. Backup Only Structure (Schema)
+
+To take a backup of just the structure (without data):
+
+<mysqldump -u root -p --no-data database_name > structure_backup.sql>
+
+--no-data: Ensures only the schema (structure) is dumped, without the actual records.
+
+
+2. Backup Only Data (Without Structure)
+
+To take a backup of only the data (without structure):
+
+<mysqldump -u root -p --no-create-info database_name > data_backup.sql>
+
+--no-create-info: Dumps only the data, without table creation commands.
+
+3. Backup Structure and Data
+
+To take a full backup (both structure and data):
+
+<mysqldump -u root -p database_name > full_backup.sql>
+
+4. Backup a Specific Table
+
+If you want to back up only a particular table:
+
+<mysqldump -u root -p database_name table_name > table_backup.sql>
+
+5. Backup All Databases
+
+To back up all databases:
+
+<mysqldump -u root -p --all-databases > all_databases_backup.sql>
+
+6. Compressing the Backup
+
+To save space, you can compress the backup:
+
+<mysqldump -u root -p database_name | gzip > backup.sql.gz>
+
+
+Restoring the Backup
+
+To restore from a backup:
+
+
+<mysql -u root -p database_name < backup.sql>
+
+For a compressed backup:
+
+
+<gunzip < backup.sql.gz | mysql -u root -p database_name>
+
+
+Backup All MySQL Databases at Once
+
+mysqldump -u root -p \
+  --all-databases \
+  --routines \
+  --events \
+  --single-transaction \
+  --quick \
+  --add-drop-database \
+  > full_mysql_backup.sql
+
+
+  | Option                 | Purpose                                                   |
+| ---------------------- | --------------------------------------------------------- |
+| `--all-databases`      | Backs up **all databases**                                |
+| `--routines`           | Includes stored procedures/functions                      |
+| `--events`             | Includes scheduled events                                 |
+| `--single-transaction` | Ensures a consistent snapshot (no table locks for InnoDB) |
+| `--quick`              | Dumps row-by-row (lower memory usage)                     |
+| `--add-drop-database`  | Adds `DROP DATABASE IF EXISTS` before each                |
+
+
+(Optional) Compress the Backup
+
+mysqldump -u root -p --all-databases --routines --events --single-transaction --quick --add-drop-database | gzip > full_mysql_backup.sql.gz
+
+
+Restore the Backup Later
+
+If file is uncompressed:
+
+<mysql -u root -p < full_mysql_backup.sql>
+
+If file is compressed:
+
+<gunzip < full_mysql_backup.sql.gz | mysql -u root -p>
+
+
+Full Process: Backup and Restore to Different DB Name
+
+Source Server (where the original database lives)
+
+Step 1: Dump the Structure Only
+
+mysqldump -u root -p \
+  --no-data --routines --events \
+  old_db_name > old_db_name_structure.sql
+
+
+mysqldump -u root -p \
+  --no-data \              # No data, only schema
+  --routines \             # Include stored procedures/functions
+  --events \               # Include scheduled events
+  --verbose \              # Show which objects are being dumped
+  old_db_name > old_db_name_structure.sql
+
+
+Step 2: Dump the Data Only
+
+mysqldump -u root -p \
+  --no-create-info --single-transaction --quick \
+  old_db_name > old_db_name_data.sql
+
+mysqldump -u root -p \
+  --no-create-info \         # Skip table structure; dump only data (INSERTs)
+  --single-transaction \     # Take consistent snapshot (InnoDB only)
+  --quick \                  # Stream rows one-by-one (low memory)
+  --verbose \                # Print progress info (table names)
+  old_db_name > old_db_name_data.sql
+
+
+Step 3: (Optional) Check for USE old_db_name; in Dump
+You can skip this step if you added --no-create-db in the dump.
+
+Otherwise, open the SQL files and make sure they don’t switch to the old DB:
+
+grep 'USE ' old_db_name_structure.sql
+grep 'USE ' old_db_name_data.sql
+
+
+If you find any USE \old_db_name`;`, replace it:
+
+sed -i 's/`old_db_name`/`new_db_name`/g' old_db_name_structure.sql
+sed -i 's/`old_db_name`/`new_db_name`/g' old_db_name_data.sql
+
+
+Step 4: Create the New Database
+
+mysql -u root -p
+
+Then in the MySQL shell:
+
+CREATE DATABASE new_db_name;
+EXIT;
+
+
+ Step 4: Restore the Structure
+
+ mysql -u root -p new_db_name < old_db_name_structure.sql
+
+
+ Step 5: Restore the Data
+
+ mysql -u root -p new_db_name < old_db_name_data.sql

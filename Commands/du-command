@@ -1,0 +1,116 @@
+The du command in Linux/Unix stands for "Disk Usage". It is used to estimate and display the disk space used by files and directories. Below is a detailed explanation of its usage and common options.
+
+<du [OPTIONS] [FILE/DIRECTORY]>
+
+If no file/directory is specified, du reports the disk usage of the current directory.
+
+Common Options
+Option	             Description
+-a	                 Show sizes for all files (not just directories)
+-h	                 Print sizes in human-readable format (KB, MB, GB)
+-s	                 Display only a summary (total size) for each argument
+--max-depth=N	     Limit output to directories up to N levels deep
+-c	                 Show a grand total at the end
+--apparent-size	     Show apparent size (what ls shows) instead of disk usage
+
+Basic Usage (Show directory sizes)
+
+du /path/to/dir
+
+Displays sizes in kilobytes (KB) for all subdirectories.
+
+Show Human-Readable Sizes (MB, GB)
+
+du -h /path/to/dir
+
+Outputs sizes in KB, MB, or GB (e.g., 4.5M, 1.2G).
+
+Show Sizes for All Files (Including Hidden Ones)
+
+du -ah /path/to/dir
+
+Show Only the Total Size of a Directory
+
+du -sh /path/to/dir
+
+Useful for checking total space used by a directory.
+
+Limit Depth of Subdirectories Shown
+
+du -h --max-depth=1 /path/to/dir
+
+Shows sizes only for immediate subdirectories.
+
+Find Largest Files/Directories (Combined with sort & head)
+
+du -ah /path/to/dir | sort -rh | head -n 10
+
+Lists the top 10 largest files/dirs in human-readable format.
+
+
+
+
+By default, du reports disk usage, not just file size (accounts for filesystem block allocation).
+Use -h for easier-to-read output.
+Combine with sort -h to properly sort human-readable sizes.
+For apparent size (like ls -l), use --apparent-size.
+
+
+Basic Options
+Option	Description
+-a, --all	Show sizes for all files (not just directories)
+-h, --human-readable	Print sizes in human-readable format (e.g., KB, MB, GB)
+-s, --summarize	Display only a total summary for each argument
+-c, --total	Show a grand total at the end
+--apparent-size	Show apparent size (what ls shows) instead of disk usage
+-k	Display sizes in kilobytes (KB) (default)
+-m	Display sizes in megabytes (MB)
+-g	Display sizes in gigabytes (GB)
+-B, --block-size=SIZE	Scale sizes by SIZE (e.g., -BM = MB, -BG = GB)
+
+
+
+Advanced Options
+Option	Description
+--max-depth=N	Limit output to directories up to N levels deep
+--exclude=PATTERN	Exclude files/dirs matching PATTERN
+--time	Show last modification time of files/dirs
+--time=WORD	Show specific time (atime, ctime, mtime)
+--files0-from=F	Read input filenames from file F (null-separated)
+-l, --count-links	Count hard links multiple times (default: once)
+-L, --dereference	Follow symbolic links (show target size)
+-P, --no-dereference	Do not follow symlinks (default)
+-x, --one-file-system	Skip directories on different filesystems
+-0, --null	Separate output with NULL (for scripting)
+-X, --exclude-from=FILE	Exclude files/dirs listed in FILE
+-D, --dereference-args	Dereference only symlinks listed as arguments
+
+
+Less Common Options
+Option	Description
+--inodes	Show inode usage instead of disk space
+--threshold=SIZE	Exclude entries smaller than SIZE
+--version	Display du version info
+--help	Show help message
+
+
+Show Disk Usage in MB, Limit Depth to 2
+
+bash
+du -hm --max-depth=2 /path/to/dir
+Exclude Certain Files (e.g., .log)
+
+bash
+du -ah --exclude='*.log' /path/to/dir
+Show Last Modified Time
+
+bash
+du -ah --time /path/to/dir
+Only Show Directories > 1GB
+
+bash
+du -h --threshold=1G /path/to/dir
+Read Input from a File (Null-Separated)
+
+bash
+du --files0-from=file_list.txt

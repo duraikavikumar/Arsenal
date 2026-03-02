@@ -1,0 +1,36 @@
+Learnings & Skill Development
+Learned Linux basics
+Understood DRM (Disaster Recovery Management) and BCP (Business Continuity Planning) concepts
+Gained working knowledge of MySQL and PostgreSQL databases
+Used Git for version control
+Learned basic configuration of Nginx and Tomcat web servers
+Worked with Tomcat as an application server
+Understood CI/CD concepts
+Gained Docker basics
+Learned virtualization basics
+Security & Hardening
+Performed manual VAPT on AWS Test, BOT, MF, and MWARE-Dev servers
+Executed script-based VAPT on BOT and MF UAT servers
+Restricted command access on PROD, UAT, and DEV servers
+Upgraded SSH on PROD, UAT, and DEV servers
+Server Administration & Configuration
+Configured servers: MF_Dev, MWARE_Dev, BOT_Dev, BOT_DR, MF_UAT
+Migrated databases for MF_UAT and Mware_UAT servers
+Deployed code on DEV and non-pipeline servers
+Increased storage on DW primary server
+Upgraded OS from Ubuntu 22 to 24
+Monitoring & Support
+Supported developers with code deployment, log/file sharing, and command execution
+Monitored systems using dashboards and LAMA
+Provided DB support for DW team (Kambala and Techexcel)
+Coordinated with Exchange team for LAMA error resolution
+Took ownership of weekly EOD tasks in Yogesh’s absence
+Took ownership of daily BOD tasks in Yogesh’s absence
+Ticket & Change Management
+Updated DB passwords on PROD and UAT servers
+Handled tickets for DB user creation and privilege provisioning on Mware_Prod, EKYC_UAT & Dev, and DW servers
+Resolved cronjob issue on MF_Prod
+Configured test domain and SSL on DW_Secondary server
+Resolved CORS issue on BOT_Prod
+Fixed GitHub deployment issue on Dev server
+Worked on various change requests

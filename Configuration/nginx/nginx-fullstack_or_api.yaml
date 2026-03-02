@@ -1,0 +1,52 @@
+# Nginx configuration for fullstack or backend-only application
+# - Listens on HTTPS (port 443)
+# - Proxies all traffic to localhost on the internal port
+# - For fullstack apps: frontend and backend run together (e.g., in a container) and are exposed on a single internal port
+
+
+# Redirect all HTTP (port 80) traffic to HTTPS
+server {
+    listen 80 default_server;
+    server_name alicemail-uat.aliceblueonline.com www.alicemail-uat.aliceblueonline.com;
+
+    return 301 https://$host$request_uri;
+}
+
+# HTTPS reverse proxy
+server {
+    listen 443 ssl http2;
+    server_name alicemail-uat.aliceblueonline.com www.alicemail-uat.aliceblueonline.com;
+
+    # SSL certificates
+    ssl_certificate /etc/ssl/certs/ssl-bundle.crt;
+    ssl_certificate_key /etc/ssl/certs/domain.tld.key;
+
+    # SSL settings
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # Logs
+    access_log /var/log/nginx/alicemail-uat.aliceblueonline.com-access.log;
+    error_log  /var/log/nginx/alicemail-uat.aliceblueonline.com-error.log;
+
+    # Proxy traffic to backend
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_cache_bypass $http_upgrade;
+    }
+}

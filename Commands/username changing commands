@@ -1,0 +1,97 @@
+# Check that the user is not logged in #
+
+<who>
+
+# Change the username #
+
+<sudo usermod -l newuser olduser>
+
+Rename the home directory
+
+#sudo mv /home/olduser /home/newuser don't use
+
+if used use the this command: sudo usermod -d /home/newuser newuser
+or sudo chown -R newuser:newuser /home/newuser
+
+
+Update the home directory path for the user
+
+sudo usermod -d /home/newuser -m newuser
+
+Rename the user's group (if it exists)
+
+getent group olduser
+
+sudo groupmod -n newuser olduser
+
+Check Ownership of Files and Directories
+
+sudo find / -user old_username -exec chown -h new_username {} \;
+
+Check for Files Owned by user using UID:
+
+sudo find / -uid old_user_UID -exec chown -h ab-admin {} \;
+
+To recreate the user with same uid
+
+sudo useradd -u 1001 dw
+
+To change the ownership to new user
+
+sudo find / -user old_username -exec chown -h new_username {} \;
+
+Skip Protected System Directories:
+You can exclude system directories like /proc, /sys, and /dev that may cause this error:
+
+sudo find / -uid 1001 \( -path /proc -o -path /sys -o -path /dev \) -prune -o -exec sudo chown -h ab-admin {} \;
+
+Identify the Primary Group of the User.
+
+id new_username
+
+
+Locate Shell Profile Files
+
+Check the .bashrc or .profile file for any reference to the old path /home/old_user. Run:
+
+grep -r "/home/AB-DEV-11" ~/.bashrc ~/.profile
+
+nano ~/.bashrc
+
+Look for lines like:
+
+source /home/AB-DEV-11/Documents/git-prompt.sh
+
+Update Global Configurations (If Necessary)
+
+If this path is referenced in global configuration files, search /etc for references to /home/old_user:
+
+sudo grep -r "/home/old_user" /etc
+
+Replace References with sed
+You can use the sed command to replace all instances of /home/AB-DEV-11 with /home/ab-dev-11 across multiple files. Here’s how:
+
+sudo find /home/ab-dev-11 -type f -exec sed -i 's|/home/AB-DEV-11|/home/ab-dev-11|g' {} +
+
+Update sudoers (if manually set)
+
+sudo visudo
+sudo ls /etc/sudoers.d/
+sudo nano /etc/sudoers.d/olduser
+
+View /etc/passwd File: This file stores user account information. Each line represents a user.
+
+cat /etc/passwd
+
+
+You'll see lines like:
+
+username:x:UID:GID:User Info:Home Directory:Shell
+
+List Only Usernames: If you want just the usernames, you can filter the output:
+
+cut -d: -f1 /etc/passwd
+
+Use getent Command: This also displays users from /etc/passwd.
+
+getent passwd

@@ -1,0 +1,104 @@
+# UFW and Sysctl configuration conflict #
+
+Even if the rules were added on the 
+
+PATH:/etc/sysctl.conf
+
+the system might follow the 
+
+PATH:/etc/ufw/sysctl.conf
+
+To make the rules are being followed from 
+
+PATH:/etc/sysctl.conf
+
+change path variable of the 
+
+# Key pairs #
+
+{
+
+IPT_SYSCTL=/etc/ufw/sysctl.conf to 
+
+IPT_SYSCTL=/etc/sysctl.conf
+
+}
+
+on the file 
+
+Path:/etc/default/ufw
+
+Once done need to restart the UFW 
+
+<sudo ufw disable>
+
+<sudo ufw enable>
+
+
+
+# To disable ipv6 disable set 1 below or to enable set 0
+
+Path:/etc/sysctl
+
+<nano /etc/sysctl.conf>
+
+# Key pairs #
+
+{
+
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+
+}
+
+# To apply the changes #
+
+<sudo sysctl -p>
+
+<sysctl --system>
+
+
+
+# Verify IPv6 is disabled #
+
+<cat /proc/sys/net/ipv6/conf/all/disable_ipv6>
+
+# GRUB Kernel Parameter (Recommended for full disable) #
+
+Edit GRUB config:
+
+<nano /etc/default/grub>
+
+Modify this line:
+
+}
+
+From:
+
+GRUB_CMDLINE_LINUX=""
+
+To:
+
+GRUB_CMDLINE_LINUX="ipv6.disable=1"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash ipv6.disable=1"
+
+}
+
+
+incase the GRUB_CMDLINE_LINUX already contains an configuration
+
+GRUB_CMDLINE_LINUX="apparmor=1 security=apparmor ipv6.disable=1"
+
+
+Update GRUB:
+
+<sudo update-grub>
+
+Reboot:
+
+<sudo reboot>
+
+Verify:
+
+/bin/grep -Pqs '^\h*0\b' /sys/module/ipv6/parameters/disable && echo -e "\n - IPv6 is enabled\n" || echo -e "\n - IPv6 is not enabled\n"

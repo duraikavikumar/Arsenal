@@ -1,0 +1,51 @@
+rsync -aogpvz \
+  --delete \
+  --progress \
+  --human-readable \
+  -e "ssh -p 20202" \
+  --rsync-path="sudo rsync" \
+  /var/www/html/ \
+  druser@192.168.1.20:/mnt/dr-backup/html/
+
+
+| Option                                     | Description                                                                    |
+| ------------------------------------------ | ------------------------------------------------------------------------------ |
+| `-a`                                       | Archive mode (preserves symlinks, permissions, ownerships, timestamps)         |
+| `-o`                                       | Preserve owner (requires `sudo rsync` on the DR server)                        |
+| `-g`                                       | Preserve group                                                                 |
+| `-p`                                       | Preserve permissions                                                           |
+| `-v`                                       | Verbose (shows file list)                                                      |
+| `-z`                                       | Compress data during transfer                                                  |
+| `--delete`                                 | Deletes files on DR that don’t exist on Prod (mirror effect)                   |
+| `--progress`                               | Shows progress of each file transfer                                           |
+| `--human-readable`                         | Displays sizes in MB/GB instead of bytes                                       |
+| `-e "ssh -p 20202"`                        | Uses SSH over port `20202`                                                     |
+| `--rsync-path="sudo rsync"`                | Runs `rsync` with `sudo` on the DR server (useful if target dir is root-owned) |
+| `/var/www/html/`                           | Source directory (trailing `/` means "contents of")                            |
+| `druser@192.168.1.20:/mnt/dr-backup/html/` | Destination on the DR server                                                   |
+
+
+Warning (before running)
+Make sure druser has passwordless sudo access to rsync on the DR server:
+
+druser ALL=(ALL) NOPASSWD: /usr/bin/rsync
+
+
+Ensure the destination path exists (/mnt/dr-backup/html/) or create it with:
+
+sudo mkdir -p /mnt/dr-backup/html
+sudo chown druser /mnt/dr-backup/html
+
+
+Optional: Test first with --dry-run
+
+rsync -aogpvz --delete --progress --human-readable --dry-run \
+  -e "ssh -p 20202" \
+  --rsync-path="sudo rsync" \
+  /var/www/html/ \
+  druser@192.168.1.20:/mnt/dr-backup/html/
+
+rsync -aogpvz --progress --human-readable -e "ssh" --rsync-path="sudo rsync" /home/nallen/img.zip nallen@10.13.68.27:/home/nallen/
+
+
+  This will simulate the sync without copying anything.

@@ -1,0 +1,28 @@
+# To enable and disable the UFW #
+
+<sudo ufw disable>
+
+<sudo ufw enable>
+
+# To add allow and deny rules on the UFW for ports#
+
+<ufw allow in <port>/<tcp or udp protocol>>
+
+<ufw deny in <port>/<tcp or udp protocol>>
+
+# To get UFW rule for an specific port #
+
+<sudo ufw status numbered | grep -w "<port>">
+
+# To get UFW rule for multiple ports #
+
+<sudo ufw status numbered | grep -Ew 'port1|port2|port2'>
+
+# To get and verify if the rule exist or not for mutiple ports #
+*Multiliner*
+<for port in PORT1 PORT2 PORT3; do
+  sudo ufw status | grep -qw "$port" && echo "✔ Port $port rule exists" || echo "✖ Port $port rule missing"
+done>
+
+*Oneliner*
+<for port in PORT1 PORT2 PORT3; do sudo ufw status | grep -qw "$port" && echo "✔ Port $port rule exists" || echo "✖ Port $port rule missing" done>

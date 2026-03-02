@@ -1,0 +1,56 @@
+Rsyslog_Journal-windows configuration
+
+define ROOT C:\Program Files\nxlog
+define CERT %ROOT%\cert
+
+Moduledir %ROOT%\modules
+CacheDir %ROOT%\data
+Pidfile %ROOT%\data\nxlog.pid
+SpoolDir %ROOT%\data
+LogFile %ROOT%\data\nxlog.log
+
+<Extension _syslog>
+    Module xm_syslog
+</Extension>
+
+<Extension _fileop>
+    Module xm_fileop
+</Extension>
+
+# --- INPUTS ---
+<Input ubuntu_in>
+    Module im_tcp
+    Host 0.0.0.0
+    Port 514
+</Input>
+
+<Input journal_remote_in>
+    Module im_ssl
+    Host 0.0.0.0
+    Port 19532
+    CAFile %CERT%\ssl-bundle.crt
+    CertFile %CERT%\ssl-bundle.crt
+    CertKeyFile %CERT%\domain.tld.key
+    RequireCert FALSE
+</Input>
+
+# --- OUTPUTS ---
+<Output local_file>
+    Module om_file
+    File "C:\Logs\syslog\ubuntu_syslog.log"
+    Exec if (file_size() >= 100M) { file_cycle("C:\Logs\syslog\ubuntu_syslog.log", 20); reopen(); }
+</Output>
+
+<Output journal_remote_file>
+    Module om_file
+    File "C:\Logs\journal\ubuntu_journal.log"
+    Exec if (file_size() >= 100M) { file_cycle("C:\Logs\journal\ubuntu_journal.log", 20); reopen(); }
+</Output>
+# --- ROUTES ---
+<Route 1>
+    Path ubuntu_in => local_file
+</Route>
+
+<Route 2>
+    Path journal_remote_in => journal_remote_file
+</Route>

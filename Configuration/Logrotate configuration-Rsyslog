@@ -1,0 +1,46 @@
+/var/log/syslog
+{
+        su root syslog
+        rotate 7
+        daily
+        maxsize 50M
+        missingok
+        notifempty
+        compress
+        delaycompress
+        sharedscripts
+        postrotate
+                /usr/lib/rsyslog/rsyslog-rotate
+        endscript
+}
+
+/var/log/mail.log
+/var/log/kern.log
+/var/log/daemon.log
+/var/log/auth.log
+/var/log/user.log
+/var/log/cron.log
+{
+        su root syslog
+        rotate 4
+        weekly
+        missingok
+        notifempty
+        compress
+        delaycompress
+        sharedscripts
+        postrotate
+                /usr/lib/rsyslog/rsyslog-rotate
+        endscript
+}
+
+# manually test and run the logrotate
+sudo logrotate -v -f /etc/logrotate.d/rsyslog
+
+To truncate the file 
+sudo sh -c 'tail -n 100000 /var/log/daemon.log > /var/log/daemon.log.1.tmp && mv /var/log/daemon.log.1.tmp /var/log/daemon.log.1'
+
+sudo sh -c 'tail -n 100000 /var/log/<logfile> > /var/log/<logfile>.tmp && mv /var/log/<logfile>.tmp /var/log/<logfile>'
+
+
+sh -c 'tail -n 100000 /var/log/syslog > /var/log/syslog.tmp && mv /var/log/syslog.tmp /var/log/syslog'

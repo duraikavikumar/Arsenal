@@ -1,0 +1,5 @@
+# To delete files with certain character altogether #
+
+rm -v *text* 
+
+*text* - can be used with other command too
