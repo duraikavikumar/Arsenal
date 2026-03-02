@@ -6,6 +6,9 @@ BASE_DIR="/var/backups/apt-locker"
 SNAP_DIR="${BASE_DIR}/snapshots"
 TRANS_DIR="${BASE_DIR}/transactions"
 PREF_DIR="/etc/apt/preferences.d"
+PROMPT_TIMEOUT=10
+UNATTENDED_PROMPT_LIMIT=3
+g_unattended_prompt_count=0
 
 # Colors & Formatting
 RED='\033[0;31m'
@@ -30,12 +33,59 @@ init_dirs() {
     touch "$LOG_FILE"
 }
 
-log() {
+log_and_print() {
     local color="$1"
-    local msg="$2"
-    local ts; ts="[$(date '+%Y-%m-%d %H:%M:%S')]"
-    echo -e "${color}${ts} ${msg}${NC}"
-    echo "${ts} ${msg}" | sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE"
+    local message="$2"
+    local timestamp
+    timestamp="[$(date '+%Y-%m-%d %H:%M:%S')]"
+    echo -e "${color}${timestamp} ${message}${NC}"
+    if [[ -n "${LOG_FILE:-}" ]]; then
+        echo "${timestamp} ${message}" | sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE"
+    fi
+}
+
+prompt_with_timer() {
+    local -n result_var=$1
+    local prompt_text=$2
+    local timeout=$3
+    local default=$4
+    local user_input=""; local char; local start_time; start_time=$(date +%s)
+    echo -ne "\033[s\033[K" 
+    while true; do
+        local current_time; current_time=$(date +%s)
+        local elapsed_time=$((current_time - start_time))
+        local time_left=$((timeout - elapsed_time))
+        if (( time_left < 0 )); then
+            user_input=""
+            break
+        fi
+        echo -ne "\033[u\033[K" 
+        echo -ne "${YLW}${prompt_text} [${default}] (${time_left}s): ${NC}${user_input}"
+        if read -r -s -n 1 -t 0.1 char; then
+            if [[ -z "$char" ]]; then
+                break
+            elif [[ "$char" == $'\x7f' || "$char" == $'\b' ]]; then
+                user_input="${user_input%?}"
+            else
+                user_input+="$char"
+            fi
+        fi
+    done
+    echo -ne "\033[u\033[K"
+    echo
+    if [[ -z "$user_input" ]]; then
+        log_and_print "$YLW" "No input provided. Timer expired. Using default answer: '${default}'"
+        result_var="$default"; ((g_unattended_prompt_count++))
+        if (( g_unattended_prompt_count >= UNATTENDED_PROMPT_LIMIT )); then
+            log_and_print "$RED" \
+            "Script has been left unattended for ${UNATTENDED_PROMPT_LIMIT} consecutive prompts. Exiting for safety."
+            exit 1
+        fi
+    else
+        log_and_print "$CYN" "User provided input: '$user_input'"
+        result_var="$user_input"
+        g_unattended_prompt_count=0
+    fi
 }
 
 # --- 1. SMART ALPHABET GRID (For Locking) ---
@@ -64,7 +114,6 @@ show_smart_alphabet_grid() {
 }
 
 # --- 2. SNAPSHOTS & TRANSACTIONS ---
-
 create_global_snapshot() {
     local reason="$1"
     local ts; ts=$(date '+%Y%m%d_%H%M%S')
@@ -77,14 +126,14 @@ create_global_snapshot() {
     fi
     apt-mark showhold > "${snap_dir}/global_holds.txt"
     echo "Reason: $reason" > "${snap_dir}/info.txt"
-    log "$CYN" "Snapshot saved: $ts"
+    log_and_print "$CYN" "Snapshot saved: $ts"
 }
 
 revert_global_snapshot() {
     local snap_id="$1"
     local target_dir="${SNAP_DIR}/${snap_id}"
-    if [[ ! -d "$target_dir" ]]; then log "$RED" "Snapshot not found."; return; fi
-    log "$YLW" "Rolling back system to $snap_id..."
+    if [[ ! -d "$target_dir" ]]; then log_and_print "$RED" "Snapshot not found."; return; fi
+    log_and_print "$YLW" "Rolling back system to $snap_id..."
     rm -f "${PREF_DIR}/"* 2>/dev/null
     apt-mark unhold "$(apt-mark showhold)" >/dev/null 2>&1
     if [[ ! -f "${target_dir}/_empty_marker" ]]; then
@@ -94,7 +143,7 @@ revert_global_snapshot() {
     if [[ -s "${target_dir}/global_holds.txt" ]]; then
         xargs -a "${target_dir}/global_holds.txt" apt-mark hold >/dev/null 2>&1
     fi
-    log "$GRN" "System restored."
+    log_and_print "$GRN" "System restored."
 }
 
 save_transaction() {
@@ -125,11 +174,11 @@ revert_single_transaction() {
     local trans_id="$1"
     local trans_file="${TRANS_DIR}/${trans_id}.state"
     if [[ ! -f "$trans_file" ]]; then
-        log "$RED" "Transaction not found."
+        log_and_print "$RED" "Transaction not found."
         return
     fi
     source "$trans_file"
-    log "$YLW" "Reverting $PACKAGE..."
+    log_and_print "$YLW" "Reverting $PACKAGE..."
     if [[ "$PREV_HOLD" == "hold" ]]; then
         apt-mark hold "$PACKAGE" >/dev/null
     else
@@ -140,11 +189,10 @@ revert_single_transaction() {
         echo "$PREV_PREF_CONTENT" | base64 -d > "${PREF_DIR}/${PREV_PREF_NAME}"
     fi
     mv "$trans_file" "${trans_file}.reverted"
-    log "$GRN" "Done."
+    log_and_print "$GRN" "Done."
 }
 
 # --- 3. EXECUTION (LOCK/UNLOCK SESSIONS) ---
-
 do_lock() {
     local query_pattern
     local last_query_was_all=false
@@ -236,17 +284,20 @@ do_lock() {
                 if [[ $real_idx -ge 0 && $real_idx -lt $total_count ]]; then
                     local pkg_to_lock; pkg_to_lock=$(echo "${ALL_PKGS[$real_idx]}" | awk '{print $1}')
                     if echo "$held_packages" | grep -q "^${pkg_to_lock}$"; then
-                        echo -e "${YLW}'$pkg_to_lock' is already locked.${NC}"
+                        log_and_print "$YLW" "'$pkg_to_lock' is already locked."
                         sleep 1.5
                         continue
                     fi
-                    create_global_snapshot "Pre-Lock $pkg_to_lock"; save_transaction "$pkg_to_lock" "LOCK"
-                    local ver; ver=$(dpkg-query -W -f='${Version}' "$pkg_to_lock")
-                    echo "Package: $pkg_to_lock
-Pin: version $ver
-Pin-Priority: 1001" > "${PREF_DIR}/${pkg_to_lock}.pref"; apt-mark hold "$pkg_to_lock" > /dev/null
-                    log "$GRN" "LOCKED: $pkg_to_lock @ $ver"
-                    echo -e "${GRN}Locked. Refreshing...${NC}"; sleep 1.5
+                    local confirmation_response
+                    prompt_with_timer confirmation_response "Confirm locking '${pkg_to_lock}'?" "$PROMPT_TIMEOUT" "y"
+                    if [[ "$confirmation_response" =~ ^[Yy]$ ]]; then
+                        create_global_snapshot "Pre-Lock $pkg_to_lock"; save_transaction "$pkg_to_lock" "LOCK"
+                        local ver; ver=$(dpkg-query -W -f='${Version}' "$pkg_to_lock")
+                        echo -e "Package: $pkg_to_lock\nPin: version $ver\nPin-Priority: 1001" > "${PREF_DIR}/${pkg_to_lock}.pref"
+                        log_and_print "$GRN" "LOCKED: $pkg_to_lock @ $ver"; echo -e "${GRN}Locked. Refreshing...${NC}"; sleep 1.5
+                    else
+                        echo -e "${YLW}Locking cancelled for '$pkg_to_lock'. Refreshing list...${NC}"; sleep 1.5
+                    fi
                 else echo -e "${RED}Invalid ID.${NC}"; sleep 1; fi
             fi
         done
@@ -293,15 +344,15 @@ do_unlock() {
         done
         echo "---------------------------------------------------------------------------"
         read -r -p "Enter ID to UNLOCK (or 'q' to return to Main Menu): " choice
-
         if [[ "$choice" == "q" || -z "$choice" ]]; then break; fi
         if [[ "$choice" =~ ^[0-9]+$ ]]; then
             local real_idx=$((choice - 1))
             if [[ $real_idx -ge 0 && $real_idx -lt $total_count ]]; then
                 local pkg_to_unlock="${LOCKED_PKGS[$real_idx]}"
                 create_global_snapshot "Pre-Unlock $pkg_to_unlock"; save_transaction "$pkg_to_unlock" "UNLOCK"
-                rm -f "${PREF_DIR}/${pkg_to_unlock}"*; apt-mark unhold "$pkg_to_unlock" > /dev/null
-                log "$GRN" "UNLOCKED: $pkg_to_unlock"
+                rm -f "${PREF_DIR}/${pkg_to_unlock}"*
+                apt-mark unhold "$pkg_to_unlock" > /dev/null
+                log_and_print "$GRN" "UNLOCKED: $pkg_to_unlock"
                 echo -e "${GRN}Unlocked. Refreshing...${NC}"; sleep 1.5
             else echo -e "${RED}Invalid ID.${NC}"; sleep 1; fi
         fi
@@ -309,7 +360,6 @@ do_unlock() {
 }
 
 # --- 4. REVERT MENUS (WITH NUMBERED SELECTION) ---
-
 list_and_revert_transaction() {
     clear
     echo -e "${BLU}--- Revert a Single Action (Transaction) ---${NC}"
