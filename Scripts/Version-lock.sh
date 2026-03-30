@@ -486,7 +486,11 @@ do_lock() {
             fi
             local held_packages; held_packages=$(capture_stdout_and_log_stderr "apt-mark" "showhold")
             mapfile -t HELD_PACKAGES_ARRAY <<< "$held_packages"
-            local pinned_packages; pinned_packages=$(capture_stdout_and_log_stderr apt-cache policy | awk '/Pinned packages:/ {flag=1; next} flag' | awk '{print $1}')
+            local pinned_packages; pinned_packages=$(
+                capture_stdout_and_log_stderr apt-cache policy \
+                | awk '/Pinned packages:/ {flag=1; next} flag' \
+                | awk '{print $1}'
+            )
             mapfile -t PINNED_PACKAGES_ARRAY <<< "$pinned_packages"
             local page_size=40
             clear
@@ -541,6 +545,8 @@ do_lock() {
                 local pkg_name_from_id; pkg_name_from_id=$(echo "${ALL_PKGS[$((id-1))]}" | awk '{print $1}')
                 if echo "$held_packages" | grep -q "^${pkg_name_from_id}$"; then
                     log_info "$YLW" "Package '$pkg_name_from_id' is already locked. Skipping from this batch.";
+                elif echo "$pinned_packages" | grep -q "^${pkg_name_from_id}$"; then
+                    log_info "$YLW" "Package '$pkg_name_from_id' is already pinned. Skipping from this batch.";
                 else
                     packages_to_lock_current_batch+=("$pkg_name_from_id")
                 fi
