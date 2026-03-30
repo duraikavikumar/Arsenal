@@ -486,6 +486,8 @@ do_lock() {
             fi
             local held_packages; held_packages=$(capture_stdout_and_log_stderr "apt-mark" "showhold")
             mapfile -t HELD_PACKAGES_ARRAY <<< "$held_packages"
+            local pinned_packages; pinned_packages=$(capture_stdout_and_log_stderr apt-cache policy | awk '/Pinned packages:/ {flag=1; next} flag' | awk '{print $1}')
+            mapfile -t PINNED_PACKAGES_ARRAY <<< "$pinned_packages"
             local page_size=40
             clear
             local header_txt; 
@@ -505,13 +507,8 @@ do_lock() {
                 local status="${GRN}Open${NC}"
                 if is_in_array "$p_name" "${HELD_PACKAGES_ARRAY[@]}"; then 
                     status="${RED}LOCKED${NC}"
-                else 
-                    for f in "${PREF_DIR}/${p_name}"*; do
-                        if [[ -e "$f" ]]; then
-                            status="${RED}LOCKED${NC}"
-                            break
-                        fi
-                    done
+                elif is_in_array "$p_name" "${PINNED_PACKAGES_ARRAY[@]}"; then
+                        status="${RED}LOCKED${NC}"
                 fi
                 printf "%-6s %-35s %-25s %-10b\n" "[$((i+1))]" "$p_name" "$p_ver" "$status"
             done
