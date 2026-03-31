@@ -450,7 +450,10 @@ do_lock() {
                     local pref_filename="${PREF_DIR}/${filename_slug}_wildcard_pin.pref"
                     local first_pkg_version=""
                     for pkg_name in "${matched_pkgs_array[@]}"; do
-                        local ver; ver=$(capture_stdout_and_log_stderr "dpkg-query" "-W" "-f=\${Version}" "$pkg_name")
+                        local ver; ver=$(
+                            capture_stdout_and_log_stderr "dpkg-query" "-W" "-f=\${Version}" "$pkg_name" \
+                            | sed -E 's/^([0-9]+:)?([0-9]+\.[0-9]+).*/\1\2*/'
+                        )
                         if [[ -n "$ver" ]]; then
                             if [[ -z "$first_pkg_version" ]]; then first_pkg_version="$ver"; fi
                             create_global_snapshot "Pre-Wildcard-Pin $pkg_name"
@@ -565,7 +568,10 @@ do_lock() {
                 log_info "$GRN" "Confirmation received. Proceeding to lock selected packages."
                 for pkg_to_lock in "${packages_to_lock_current_batch[@]}"; do
                     create_global_snapshot "Pre-Lock $pkg_to_lock"; save_transaction "$pkg_to_lock" "LOCK"
-                    local ver; ver=$(capture_stdout_and_log_stderr "dpkg-query" "-W" "-f=\${Version}" "$pkg_to_lock")
+                    local ver; ver=$(
+                        capture_stdout_and_log_stderr "dpkg-query" "-W" "-f=\${Version}" "$pkg_to_lock" \
+                        | sed -E 's/^([0-9]+:)?([0-9]+\.[0-9]+).*/\1\2*/'
+                    )
                     log_info "$CYN" "Creating preference file for '$pkg_to_lock'."
                     local pref_content="Package: $pkg_to_lock\nPin: version $ver\nPin-Priority: 1001"
                     run_and_log_cmd echo -e "$pref_content" > "${PREF_DIR}/${pkg_to_lock}.pref"
@@ -604,7 +610,10 @@ do_unlock() {
         echo "---------------------------------------------------------------------------"
         local i=0
         for pkg in "${ALL_LOCKED_PKGS[@]}"; do
-            local ver; ver=$(capture_stdout_and_log_stderr "dpkg-query" "-W" "-f=\${Version}" "$pkg" 2>/dev/null)
+            local ver; ver=$(
+                capture_stdout_and_log_stderr "dpkg-query" "-W" "-f=\${Version}" "$pkg" \
+                | sed -E 's/^([0-9]+:)?([0-9]+\.[0-9]+).*/\1\2*/'
+            )
             local type_str=""
             local is_held; is_held=$(echo "$holds" | grep -q "^$pkg$"; echo $?)
             local is_pinned=1
