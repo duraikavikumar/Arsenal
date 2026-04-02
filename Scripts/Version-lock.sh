@@ -522,7 +522,30 @@ do_lock() {
             echo "--------------------------------------------------------------------------------"
             echo -e "Showing $((current_idx+1)) to $end_idx of $total_count"
             read -r -p "Type [ID,ID/range] to lock, (n)ext, (p)rev, (b)ack to method selection: " choice
-            if [[ "$choice" == "b" ]]; then log_info "$YLW" "Returning to search method selection menu."; break; fi
+            if [[ "$choice" == "b" ]]; then
+                if [[ "$last_search_method" == "alphabet" ]]; then
+                    log_info "$YLW" "Returning to Alphabet Grid."
+                    show_smart_alphabet_grid
+                    read -r -p "Enter Letter: " letter
+                    letter=$(echo "$letter" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+                    if [[ -z "$letter" ]]; then
+                        continue
+                    fi
+                    if ! capture_stdout_and_log_stderr "dpkg-query" "-W" "-f=\${Package}\n" | grep -iq "^$letter"; then
+                        log_info "$RED" "No pkgs start with '$letter'."
+                        sleep 1
+                        continue
+                    fi
+                    query_pattern="^${letter}"
+                    last_query_was_all=false
+                    last_search_method="alphabet"
+                    current_idx=0
+                    continue
+                else
+                    log_info "$YLW" "Returning to search method selection menu."
+                    break
+                fi
+            fi
             if [[ "$choice" == "n" && $end_idx -lt $total_count ]]; then
                 log_info "$CYN" "Navigating to next page."
                 current_idx=$((current_idx + page_size))
