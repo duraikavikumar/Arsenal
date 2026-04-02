@@ -526,9 +526,9 @@ do_lock() {
                 if [[ "$last_search_method" == "alphabet" ]]; then
                     log_info "$YLW" "Returning to Alphabet Grid."
                     show_smart_alphabet_grid
-                    read -r -p "Enter Letter (or 'q' to go back): " letter
+                    read -r -p "Enter Letter (or '0' to go back): " letter
                     letter=$(echo "$letter" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
-                    if [[ "$letter" == "q" ]]; then
+                    if [[ "$letter" == "0" ]]; then
                         log_info "$YLW" "Exiting Alphabet Mode."
                         break
                     fi
