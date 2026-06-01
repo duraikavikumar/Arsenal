@@ -1,0 +1,131 @@
+# Whitelisting via nginx
+
+# Path:/etc/nginx/snippets/whitelist.conf
+
+
+# 1. Trust Cloudflare IPs (so Nginx can see the real visitor IP)
+set_real_ip_from 103.21.244.0/22;
+set_real_ip_from 103.22.200.0/22;
+set_real_ip_from 103.31.4.0/22;
+set_real_ip_from 104.16.0.0/13;
+set_real_ip_from 104.24.0.0/14;
+set_real_ip_from 108.162.192.0/18;
+set_real_ip_from 131.0.72.0/22;
+set_real_ip_from 141.101.64.0/18;
+set_real_ip_from 162.158.0.0/15;
+set_real_ip_from 172.64.0.0/13;
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 188.114.96.0/20;
+set_real_ip_from 190.93.240.0/20;
+set_real_ip_from 197.234.240.0/22;
+set_real_ip_from 198.41.128.0/17;
+
+# 2. Tell Nginx to look at the Cloudflare Header
+real_ip_header CF-Connecting-IP;
+
+# 3. Your Office Allowlist
+allow 1.7.199.99;
+allow 122.185.117.146;
+allow 49.204.90.18;
+allow 182.75.143.62;
+allow 182.71.252.214;
+
+deny all;
+
+
+# inside the site configuration of each VH file add the following lines inside server block before the location block
+
+
+include snippets/whitelist.conf;
+
+
+
+like this 
+
+
+# Redirect HTTP -> HTTPS
+server {
+    listen 80;
+    server_name logs.aliceblueonline.com;
+    return 301 https://$host$request_uri;
+}
+
+# Redirect HTTP -> HTTPS
+server {
+    listen 80;
+    server_name obs.aliceblueonline.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+        listen 443 ssl;
+        server_name logs.aliceblueonline.com;
+
+# 🔒 SSL Configuration
+        ssl_certificate /etc/ssl/certs/ssl-bundle.crt;
+        ssl_certificate_key /etc/ssl/certs/domain.tld.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers on;
+        ssl_ciphers 'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256';
+        ssl_conf_command Ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256;
+        ssl_ecdh_curve X25519:P-256:P-384;
+        ssl_session_tickets off;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+
+        add_header Content-Security-Policy-Report-Only "default-src 'none'; frame-ancestors 'none';" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Cache-Control "no-store, max-age=0" always;
+
+        include snippets/whitelist.conf;
+
+location / {
+        proxy_pass http://localhost:5601/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+}
+}
+
+server {
+        listen 443 ssl;
+        server_name obs.aliceblueonline.com;
+
+        ssl_certificate /etc/ssl/certs/ssl-bundle.crt;
+        ssl_certificate_key /etc/ssl/certs/domain.tld.key;
+        ssl_session_timeout 1d;
+        ssl_session_cache shared:MozSSL:10m;  # about 40000 sessions
+        ssl_session_tickets off;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305;
+        ssl_prefer_server_ciphers off;
+
+        add_header Content-Security-Policy-Report-Only "default-src 'none'; frame-ancestors 'none';" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Cache-Control "no-store, max-age=0" always;
+
+        include snippets/whitelist.conf;
+
+location / {
+        proxy_pass http://localhost:3000/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+}
+}
