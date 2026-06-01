@@ -37,6 +37,7 @@ declare -gA TARGET_HOSTNAMES=()
 # Helper: Real-time, line-by-line streaming timestamp filter
 # Strips carriage returns in-memory to prevent terminal cursor overwrites
 add_timestamps() {
+    local line
     while IFS= read -r line || [ -n "$line" ]; do
         local clean_line="${line//$'\r'/}"
         printf "%s - %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$clean_line"
@@ -51,27 +52,61 @@ log_local() {
     fi
 }
 
-# Environment Selector
+# Dynamic Environment Selector (Scans directory for host files)
 select_environment() {
+    local choice_limit
+    local env_choice
+    local -a FOUND_HOST_FILES=()
+
+    # Find all files matching hosts_*.txt in the local script directory
+    mapfile -t FOUND_HOST_FILES < <(find "$LOCAL_DIR" -maxdepth 1 -type f -name "hosts_*.txt" | sort)
+
+    if [ ${#FOUND_HOST_FILES[@]} -eq 0 ]; then
+        echo -e "${RED}Error: No host files matching 'hosts_*.txt' found in $LOCAL_DIR.${NC}"
+        echo -e "${RED}Please create at least one host file (e.g. hosts_prod.txt) before running.${NC}"
+        exit 1
+    fi
+
+    # IF only one host file exists, auto-select it and bypass the menu entirely
+    if [ ${#FOUND_HOST_FILES[@]} -eq 1 ]; then
+        HOSTS_FILE=$(basename "${FOUND_HOST_FILES[0]}")
+        local env_name
+        env_name=$(echo "$HOSTS_FILE" | sed 's/^hosts_//' | sed 's/\.txt$//' | tr '_' ' ' | tr '[:lower:]' '[:upper:]')
+        CURRENT_ENV="$env_name"
+        echo -e "\n${GRN}[+] Auto-detected single host file: $HOSTS_FILE (Environment: $CURRENT_ENV)${NC}"
+        log_local "ENVIRONMENT_AUTO_DETECTED | Operator: $LOCAL_USER | Env: $CURRENT_ENV ($HOSTS_FILE)"
+        return
+    fi
+
+    # Otherwise, present the choice of discovered host files
     echo -e "\n${BLU}--- SELECT TARGET ENVIRONMENT ---${NC}"
-    echo "1) Dev & UAT"
-    echo "2) Production"
-    echo "3) Disaster Recovery (DR)"
-    echo "4) Exit Orchestrator"
-    read -r -p "Choose environment [1-4]: " env_choice
+    for i in "${!FOUND_HOST_FILES[@]}"; do
+        local fname
+        fname=$(basename "${FOUND_HOST_FILES[$i]}")
+        local env_display
+        env_display=$(echo "$fname" | sed 's/^hosts_//' | sed 's/\.txt$//' | tr '_' ' ' | tr '[:lower:]' '[:upper:]')
+        echo "  $((i+1))) $env_display ($fname)"
+    done
+    echo "  $(( ${#FOUND_HOST_FILES[@]} + 1 ))) Exit Orchestrator"
+    
+    choice_limit=$(( ${#FOUND_HOST_FILES[@]} + 1 ))
+    read -r -p "Choose environment [1-$choice_limit]: " env_choice
 
-    case $env_choice in
-        1) CURRENT_ENV="Dev & UAT"; HOSTS_FILE="hosts_dev_uat.txt" ;;
-        2) CURRENT_ENV="Production"; HOSTS_FILE="hosts_prod.txt" ;;
-        3) CURRENT_ENV="Disaster Recovery"; HOSTS_FILE="hosts_dr.txt" ;;
-        4) log_local "USER ACTION: Exit during env selection."; echo "Exiting."; exit 0 ;;
-        *) echo -e "${RED}Invalid selection. Please try again.${NC}"; select_environment; return ;;
-    esac
+    if [[ "$env_choice" =~ ^[0-9]+$ ]] && [ "$env_choice" -eq "$choice_limit" ]; then
+        log_local "USER ACTION: Exit during env selection."
+        echo "Exiting."
+        exit 0
+    fi
 
-    if [ ! -f "$LOCAL_DIR/$HOSTS_FILE" ]; then
-        echo -e "${RED}Error: Host file '$HOSTS_FILE' not found in $LOCAL_DIR.${NC}"
-        CURRENT_ENV=""
-        HOSTS_FILE=""
+    if [[ "$env_choice" =~ ^[0-9]+$ ]] && [ "$env_choice" -ge 1 ] && [ "$env_choice" -lt "$choice_limit" ]; then
+        HOSTS_FILE=$(basename "${FOUND_HOST_FILES[$((env_choice-1))]}")
+        local env_name
+        env_name=$(echo "$HOSTS_FILE" | sed 's/^hosts_//' | sed 's/\.txt$//' | tr '_' ' ' | tr '[:lower:]' '[:upper:]')
+        CURRENT_ENV="$env_name"
+        echo -e "${GRN}Target Environment set to: $CURRENT_ENV ($HOSTS_FILE)${NC}"
+        log_local "ENVIRONMENT_CHANGED | Operator: $LOCAL_USER | New Env: $CURRENT_ENV ($HOSTS_FILE)"
+    else
+        echo -e "${RED}Invalid selection. Please try again.${NC}"
         select_environment
         return
     fi
@@ -79,6 +114,10 @@ select_environment() {
 
 # Step 1: Display targets and filter the list
 filter_targets() {
+    local select_choice
+    local run_nums
+    local exclude_nums
+
     # Read raw host lines, stripping out comments and empty lines
     mapfile -t ALL_TARGETS < <(grep -vE '^\s*(#|$)' "$LOCAL_DIR/$HOSTS_FILE")
 
@@ -141,8 +180,12 @@ filter_targets() {
     fi
 }
 
-# Step 2: Test connection and map hostnames (With Always-On Handshake Logging)
+# Step 2: Test connection and map hostnames (Unfiltered on Failure, Quiet on Success)
 test_connections() {
+    local stdout_tmp
+    local stderr_tmp
+    local remote_hostname
+
     ONLINE_TARGETS=()
     TARGET_HOSTNAMES=() # Reset map
 
@@ -150,25 +193,37 @@ test_connections() {
     log_local "CONNECTIVITY_CHECK: Verifying target reachability with SSH Verbose Handshake."
 
     for target in "${ACTIVE_TARGETS[@]}"; do
-        # We print a newline before testing each host because 'ssh -v' dumps several lines of output.
-        echo -e "\nTesting $target... "
         log_local "TEST_CONNECTION: target=$target"
         
-        local remote_hostname
-        # Connect with '-v' to record all handshake steps in both the local log file and screen.
-        # We route stderr through the line-by-line timestamp filter and pipe it to standard error.
-        if remote_hostname=$(ssh -v -o ConnectTimeout=3 -o StrictHostKeyChecking=no "$target" "hostname" </dev/null \
-            2> >(add_timestamps | tee -a "$LOCAL_LOG_FILE" >&2)); then
-            
-            remote_hostname=$(echo "$remote_hostname" | tr -d '\r\n')
+        # Buffer streams locally (SC2155 Compliant)
+        stdout_tmp=$(mktemp)
+        stderr_tmp=$(mktemp)
+        remote_hostname=""
+
+        # Connect and save exit code separately to avoid masking (SC2312/SC1014 Compliant)
+        ssh -v -o ConnectTimeout=3 -o StrictHostKeyChecking=no "$target" "hostname" </dev/null > "$stdout_tmp" 2> "$stderr_tmp"
+        local ssh_exit_code=$?
+
+        if [ "$ssh_exit_code" -eq 0 ]; then
+            remote_hostname=$(tr -d '\r\n' < "$stdout_tmp")
             TARGET_HOSTNAMES["$target"]="$remote_hostname"
             ONLINE_TARGETS+=("$target")
-            echo -e "[${GRN}ONLINE${NC}] Hostname: ${CYN}$remote_hostname${NC}"
+            
+            # Success: Keep screen clean and log handshake quietly
+            echo -e "Testing $target... [${GRN}ONLINE${NC}] Hostname: ${CYN}$remote_hostname${NC}"
             log_local "TEST_SUCCESS: target=$target | hostname=$remote_hostname"
+            # Read from file using redirect instead of cat (SC2002 Compliant)
+            add_timestamps < "$stderr_tmp" >> "$LOCAL_LOG_FILE"
         else
-            echo -e "[${RED}OFFLINE / TIMEOUT - Handshake Logged Above${NC}]"
-            log_local "TEST_FAILURE: target=$target | Connection failed. Review the log above for full SSH handshake details."
+            # Failure: Dump the full handshake logs to the terminal screen
+            echo -e "Testing $target... [${RED}OFFLINE / TIMEOUT - Handshake Diagnostics Logged Below${NC}]"
+            add_timestamps < "$stderr_tmp"
+            
+            log_local "TEST_FAILURE: target=$target | Connection failed."
+            add_timestamps < "$stderr_tmp" >> "$LOCAL_LOG_FILE"
         fi
+
+        rm -f "$stdout_tmp" "$stderr_tmp"
     done
 
     echo -e "\nConnectivity Check Summary:"
@@ -193,6 +248,10 @@ execute_remote_task() {
     local task_type="$1" # "command" or "script"
     local execution_payload=""
     local final_command=""
+    local csv_req
+    local csv_choice
+    local stdout_tmp
+    local stderr_tmp
 
     if [ ${#ONLINE_TARGETS[@]} -eq 0 ]; then
         echo -e "${RED}Error: No online servers available in active selection. Please switch environment or re-select targets.${NC}"
@@ -225,34 +284,76 @@ execute_remote_task() {
         local border="=========================================================="
         local header="OPERATOR: $LOCAL_USER | TARGET: $target ($remote_name) | EXECUTE: sudo $final_command"
         
-        echo -e "\n${CYN}$border${NC}"
-        echo -e "${CYN}$header${NC}"
-        echo -e "${CYN}$border${NC}"
-
         log_local "$border"
         log_local "$header"
         log_local "Host Execution Start: $(date --rfc-3339=seconds)"
 
-        # Deep Verbose Execution Pipeline:
-        # - stdout/stderr are combined via 2>&1
-        # - The unified stream is piped through 'add_timestamps' to stamp every single line
-        # - 'tee -a' prints the stamped stream to your terminal and log file simultaneously
-        ssh -v -o StrictHostKeyChecking=no "$target" "sudo $final_command" </dev/null 2>&1 \
-            | add_timestamps \
-            | tee -a "$LOCAL_LOG_FILE"
-        local exit_code=${PIPESTATUS[0]}
+        # Buffer streams (SC2155 Compliant)
+        stdout_tmp=$(mktemp)
+        stderr_tmp=$(mktemp)
+
+        # Execute remote command, storing streams into isolated temporary buffers
+        ssh -v -o StrictHostKeyChecking=no "$target" "sudo $final_command" </dev/null > "$stdout_tmp" 2> "$stderr_tmp"
+        local exit_code=$?
+
+        # Always write standard output and stderr traces to the central master log file (SC2002 Compliant)
+        if [ -s "$stdout_tmp" ]; then
+            log_local "--- [$target] STANDARD OUTPUT ---"
+            add_timestamps < "$stdout_tmp" >> "$LOCAL_LOG_FILE"
+        fi
+        if [ -s "$stderr_tmp" ]; then
+            log_local "--- [$target] DEBUG & ERROR OUTPUT ---"
+            add_timestamps < "$stderr_tmp" >> "$LOCAL_LOG_FILE"
+        fi
+
+        # Output transaction headers to the terminal screen
+        echo -e "\n${CYN}$border${NC}"
+        echo -e "${CYN}$header${NC}"
+        echo -e "${CYN}$border${NC}"
+
+        if [ "$exit_code" -eq 0 ]; then
+            # SUCCESS (Exit Code 0): Print ONLY the standard output (clean)
+            if [ -s "$stdout_tmp" ]; then
+                add_timestamps < "$stdout_tmp"
+            fi
+            echo -e "${CYN}$border${NC}"
+            echo -e "${GRN}Finished on $target ($remote_name) (Exit Code: $exit_code)${NC}"
+            echo -e "${CYN}$border${NC}"
+
+        elif [ "$exit_code" -eq 255 ]; then
+            # SSH CONNECTION/LOGIN FAILURE (Exit Code 255): Print standard output AND the entire raw handshake
+            if [ -s "$stdout_tmp" ]; then
+                echo -e "${CYN}--- STANDARD OUTPUT ---${NC}"
+                add_timestamps < "$stdout_tmp"
+            fi
+            echo -e "${RED}--- SSH CONNECTION / LOGIN DIAGNOSTICS (HANDSHAKE FAILURE) ---${NC}"
+            add_timestamps < "$stderr_tmp"
+            
+            echo -e "${CYN}$border${NC}"
+            echo -e "${RED}Finished on $target ($remote_name) (Exit Code: $exit_code - SSH Connection Error)${NC}"
+            echo -e "${CYN}$border${NC}"
+
+        else
+            # REMOTE COMMAND FAILURE (Exit Code 1-254): Print standard output and ONLY command errors / traces,
+            # using an optimized regex to filter out the SSH protocol connection lines from the screen.
+            if [ -s "$stdout_tmp" ]; then
+                echo -e "${CYN}--- STANDARD OUTPUT ---${NC}"
+                add_timestamps < "$stdout_tmp"
+            fi
+            echo -e "${RED}--- REMOTE COMMAND ERROR & EXECUTION TRACE ---${NC}"
+            # Regex removes kex, ssh_packet, debug1/2/3, authentication lines, and channel allocations from screen
+            grep -v -i -E "^(debug[1-3]:|transferred:|bytes per second:|authenticated to|kex_|ssh2_|local version|channel 0|requesting |entering interactive|pledge:|client_input|remote: |sending environment|sending command)" < "$stderr_tmp" | add_timestamps
+            
+            echo -e "${CYN}$border${NC}"
+            echo -e "${RED}Finished on $target ($remote_name) (Exit Code: $exit_code)${NC}"
+            echo -e "${CYN}$border${NC}"
+        fi
 
         log_local "Host Execution Finish: $(date --rfc-3339=seconds)"
         log_local "Exit Code: $exit_code"
         log_local "$border"
 
-        echo -e "${CYN}$border${NC}"
-        if [ "$exit_code" -eq 0 ]; then
-            echo -e "${GRN}Finished on $target ($remote_name) (Exit Code: $exit_code)${NC}"
-        else
-            echo -e "${RED}Finished on $target ($remote_name) (Exit Code: $exit_code)${NC}"
-        fi
-        echo -e "${CYN}$border${NC}"
+        rm -f "$stdout_tmp" "$stderr_tmp"
     done
 }
 
