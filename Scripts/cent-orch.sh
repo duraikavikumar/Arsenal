@@ -20,6 +20,7 @@ LOCAL_USER="${SUDO_USER:-$USER}"
 
 # Configuration
 LOG_DIR_NAME="automation_logs"
+FETCH_DIR_NAME="fetched_files"
 
 # Resolve local directories
 LOCAL_DIR=$(dirname "$(readlink -f "$0")")
@@ -52,21 +53,18 @@ log_local() {
     fi
 }
 
-# Dynamic Environment Selector (Scans directory for host files)
+# Dynamic Environment Selector
 select_environment() {
     local choice_limit
     local env_choice
     local -a FOUND_HOST_FILES=()
-
     # Find all files matching hosts_*.txt in the local script directory
     mapfile -t FOUND_HOST_FILES < <(find "$LOCAL_DIR" -maxdepth 1 -type f -name "hosts_*.txt" | sort)
-
     if [ ${#FOUND_HOST_FILES[@]} -eq 0 ]; then
         echo -e "${RED}Error: No host files matching 'hosts_*.txt' found in $LOCAL_DIR.${NC}"
         echo -e "${RED}Please create at least one host file (e.g. hosts_prod.txt) before running.${NC}"
         exit 1
     fi
-
     # IF only one host file exists, auto-select it and bypass the menu entirely
     if [ ${#FOUND_HOST_FILES[@]} -eq 1 ]; then
         HOSTS_FILE=$(basename "${FOUND_HOST_FILES[0]}")
@@ -77,7 +75,6 @@ select_environment() {
         log_local "ENVIRONMENT_AUTO_DETECTED | Operator: $LOCAL_USER | Env: $CURRENT_ENV ($HOSTS_FILE)"
         return
     fi
-
     # Otherwise, present the choice of discovered host files
     echo -e "\n${BLU}--- SELECT TARGET ENVIRONMENT ---${NC}"
     for i in "${!FOUND_HOST_FILES[@]}"; do
@@ -88,16 +85,13 @@ select_environment() {
         echo "  $((i+1))) $env_display ($fname)"
     done
     echo "  $(( ${#FOUND_HOST_FILES[@]} + 1 ))) Exit Orchestrator"
-    
     choice_limit=$(( ${#FOUND_HOST_FILES[@]} + 1 ))
     read -r -p "Choose environment [1-$choice_limit]: " env_choice
-
     if [[ "$env_choice" =~ ^[0-9]+$ ]] && [ "$env_choice" -eq "$choice_limit" ]; then
         log_local "USER ACTION: Exit during env selection."
         echo "Exiting."
         exit 0
     fi
-
     if [[ "$env_choice" =~ ^[0-9]+$ ]] && [ "$env_choice" -ge 1 ] && [ "$env_choice" -lt "$choice_limit" ]; then
         HOSTS_FILE=$(basename "${FOUND_HOST_FILES[$((env_choice-1))]}")
         local env_name
@@ -112,35 +106,29 @@ select_environment() {
     fi
 }
 
-# Step 1: Display targets and filter the list
+# Step 1: Filter active targets
 filter_targets() {
     local select_choice
     local run_nums
     local exclude_nums
-
     # Read raw host lines, stripping out comments and empty lines
     mapfile -t ALL_TARGETS < <(grep -vE '^\s*(#|$)' "$LOCAL_DIR/$HOSTS_FILE")
-
     if [ ${#ALL_TARGETS[@]} -eq 0 ]; then
         echo -e "${RED}Error: Selected hosts file is empty or contains only comments.${NC}"
         CURRENT_ENV=""
         HOSTS_FILE=""
         return 1
     fi
-
     echo -e "\nAvailable Targets in $CURRENT_ENV:"
     for i in "${!ALL_TARGETS[@]}"; do
         echo "  $((i+1))) ${ALL_TARGETS[$i]}"
     done
-
     echo -e "\nTarget Selection Options:"
     echo "  1) Run on ALL servers"
     echo "  2) Run on SELECTED servers"
     echo "  3) Run on all EXCEPT selected servers (Omit some)"
     read -r -p "Select choice [1-3]: " select_choice
-
     ACTIVE_TARGETS=()
-
     case $select_choice in
         1)
             ACTIVE_TARGETS=("${ALL_TARGETS[@]}")
@@ -172,7 +160,6 @@ filter_targets() {
             ACTIVE_TARGETS=("${ALL_TARGETS[@]}")
             ;;
     esac
-
     if [ ${#ACTIVE_TARGETS[@]} -eq 0 ]; then
         echo -e "${RED}Error: Active target list is empty. Reselecting...${NC}"
         filter_targets
@@ -180,35 +167,29 @@ filter_targets() {
     fi
 }
 
-# Step 2: Test connection and map hostnames (Unfiltered on Failure, Quiet on Success)
+# Step 2: Test connection and map hostnames
 test_connections() {
     local stdout_tmp
     local stderr_tmp
     local remote_hostname
-
     ONLINE_TARGETS=()
     TARGET_HOSTNAMES=() # Reset map
-
     echo -e "\n${CYN}--- Verifying Connectivity and Fetching Hostnames ---${NC}"
     log_local "CONNECTIVITY_CHECK: Verifying target reachability with SSH Verbose Handshake."
-
     for target in "${ACTIVE_TARGETS[@]}"; do
+        echo -e "\nTesting $target... "
         log_local "TEST_CONNECTION: target=$target"
-        
         # Buffer streams locally (SC2155 Compliant)
         stdout_tmp=$(mktemp)
         stderr_tmp=$(mktemp)
         remote_hostname=""
-
         # Connect and save exit code separately to avoid masking (SC2312/SC1014 Compliant)
         ssh -v -o ConnectTimeout=3 -o StrictHostKeyChecking=no "$target" "hostname" </dev/null > "$stdout_tmp" 2> "$stderr_tmp"
         local ssh_exit_code=$?
-
         if [ "$ssh_exit_code" -eq 0 ]; then
             remote_hostname=$(tr -d '\r\n' < "$stdout_tmp")
             TARGET_HOSTNAMES["$target"]="$remote_hostname"
             ONLINE_TARGETS+=("$target")
-            
             # Success: Keep screen clean and log handshake quietly
             echo -e "Testing $target... [${GRN}ONLINE${NC}] Hostname: ${CYN}$remote_hostname${NC}"
             log_local "TEST_SUCCESS: target=$target | hostname=$remote_hostname"
@@ -216,7 +197,7 @@ test_connections() {
             add_timestamps < "$stderr_tmp" >> "$LOCAL_LOG_FILE"
         else
             # Failure: Dump the full handshake logs to the terminal screen
-            echo -e "Testing $target... [${RED}OFFLINE / TIMEOUT - Handshake Diagnostics Logged Below${NC}]"
+            echo -e "Testing $target... [${RED}OFFLINE / TIMEOUT - Handshake Diagnostics Logged Above${NC}]"
             add_timestamps < "$stderr_tmp"
             
             log_local "TEST_FAILURE: target=$target | Connection failed."
@@ -225,12 +206,10 @@ test_connections() {
 
         rm -f "$stdout_tmp" "$stderr_tmp"
     done
-
     echo -e "\nConnectivity Check Summary:"
     echo -e "  Total Selected: ${#ACTIVE_TARGETS[@]}"
     echo -e "  Online/Ready:   ${GRN}${#ONLINE_TARGETS[@]}${NC}"
     echo -e "  Offline/Skipped: ${RED}$(( ${#ACTIVE_TARGETS[@]} - ${#ONLINE_TARGETS[@]} ))${NC}"
-
     if [ ${#ONLINE_TARGETS[@]} -eq 0 ]; then
         echo -e "${RED}Error: No online servers available in current selection.${NC}"
     fi
@@ -252,50 +231,39 @@ execute_remote_task() {
     local csv_choice
     local stdout_tmp
     local stderr_tmp
-
     if [ ${#ONLINE_TARGETS[@]} -eq 0 ]; then
         echo -e "${RED}Error: No online servers available in active selection. Please switch environment or re-select targets.${NC}"
         return
     fi
-
     if [ "$task_type" == "command" ]; then
         echo -ne "\n${YLW}Enter the command to run (e.g., apt-get update -y): ${NC}"
         read -r execution_payload
         if [ "$execution_payload" == "" ]; then echo -e "${RED}Error: Input cannot be empty.${NC}"; return; fi
-        
         # Enforce always-on bash execution trace (bash -x)
         final_command="bash -x -c '$execution_payload'"
     fi
-
     if [ "$task_type" == "script" ]; then
         echo -ne "\n${YLW}Enter the remote script path and args (e.g., /opt/security-hardening/script-1.sh audit): ${NC}"
         read -r execution_payload
         if [ "$execution_payload" == "" ]; then echo -e "${RED}Error: Input cannot be empty.${NC}"; return; fi
-        
         # Enforce always-on bash execution trace (bash -x)
         final_command="bash -x $execution_payload"
     fi
-
     log_local "EXECUTION_START | Operator: $LOCAL_USER | Task Type: $task_type | Target Env: $CURRENT_ENV | Payload: $final_command"
-
     # Loop through validated online targets
     for target in "${ONLINE_TARGETS[@]}"; do
         local remote_name="${TARGET_HOSTNAMES[$target]}"
         local border="=========================================================="
         local header="OPERATOR: $LOCAL_USER | TARGET: $target ($remote_name) | EXECUTE: sudo $final_command"
-        
         log_local "$border"
         log_local "$header"
         log_local "Host Execution Start: $(date --rfc-3339=seconds)"
-
         # Buffer streams (SC2155 Compliant)
         stdout_tmp=$(mktemp)
         stderr_tmp=$(mktemp)
-
         # Execute remote command, storing streams into isolated temporary buffers
         ssh -v -o StrictHostKeyChecking=no "$target" "sudo $final_command" </dev/null > "$stdout_tmp" 2> "$stderr_tmp"
-        local exit_code=$?
-
+        local exit_code=${PIPESTATUS[0]}
         # Always write standard output and stderr traces to the central master log file (SC2002 Compliant)
         if [ -s "$stdout_tmp" ]; then
             log_local "--- [$target] STANDARD OUTPUT ---"
@@ -305,12 +273,10 @@ execute_remote_task() {
             log_local "--- [$target] DEBUG & ERROR OUTPUT ---"
             add_timestamps < "$stderr_tmp" >> "$LOCAL_LOG_FILE"
         fi
-
         # Output transaction headers to the terminal screen
         echo -e "\n${CYN}$border${NC}"
         echo -e "${CYN}$header${NC}"
         echo -e "${CYN}$border${NC}"
-
         if [ "$exit_code" -eq 0 ]; then
             # SUCCESS (Exit Code 0): Print ONLY the standard output (clean)
             if [ -s "$stdout_tmp" ]; then
@@ -319,7 +285,6 @@ execute_remote_task() {
             echo -e "${CYN}$border${NC}"
             echo -e "${GRN}Finished on $target ($remote_name) (Exit Code: $exit_code)${NC}"
             echo -e "${CYN}$border${NC}"
-
         elif [ "$exit_code" -eq 255 ]; then
             # SSH CONNECTION/LOGIN FAILURE (Exit Code 255): Print standard output AND the entire raw handshake
             if [ -s "$stdout_tmp" ]; then
@@ -328,11 +293,9 @@ execute_remote_task() {
             fi
             echo -e "${RED}--- SSH CONNECTION / LOGIN DIAGNOSTICS (HANDSHAKE FAILURE) ---${NC}"
             add_timestamps < "$stderr_tmp"
-            
             echo -e "${CYN}$border${NC}"
             echo -e "${RED}Finished on $target ($remote_name) (Exit Code: $exit_code - SSH Connection Error)${NC}"
             echo -e "${CYN}$border${NC}"
-
         else
             # REMOTE COMMAND FAILURE (Exit Code 1-254): Print standard output and ONLY command errors / traces,
             # using an optimized regex to filter out the SSH protocol connection lines from the screen.
@@ -342,18 +305,136 @@ execute_remote_task() {
             fi
             echo -e "${RED}--- REMOTE COMMAND ERROR & EXECUTION TRACE ---${NC}"
             # Regex removes kex, ssh_packet, debug1/2/3, authentication lines, and channel allocations from screen
-            grep -v -i -E "^(debug[1-3]:|transferred:|bytes per second:|authenticated to|kex_|ssh2_|local version|channel 0|requesting |entering interactive|pledge:|client_input|remote: |sending environment|sending command)" < "$stderr_tmp" | add_timestamps
-            
+            grep -v -i -E \
+            "^(debug[1-3]:|transferred:|bytes per second:|authenticated to|kex_|ssh2_|local version|channel 0|requesting \
+            |entering interactive|pledge:|client_input|remote: |sending environment|sending command)" < "$stderr_tmp" \
+            | add_timestamps
             echo -e "${CYN}$border${NC}"
             echo -e "${RED}Finished on $target ($remote_name) (Exit Code: $exit_code)${NC}"
             echo -e "${CYN}$border${NC}"
         fi
+        rm -f "$stdout_tmp" "$stderr_tmp"
+    done
+}
 
-        log_local "Host Execution Finish: $(date --rfc-3339=seconds)"
-        log_local "Exit Code: $exit_code"
+# New Feature: Fetch File/Directory and Save Locally (Option 3)
+fetch_remote_path() {
+    local remote_path=""
+    local fetch_mode=""
+    if [ ${#ONLINE_TARGETS[@]} -eq 0 ]; then
+        echo -e "${RED}Error: No online servers available in active selection.${NC}"
+        return
+    fi
+    # Step A: Choose whether fetching a single file or a directory
+    echo -e "\n${BLU}--- SELECT FETCH TYPE ---${NC}"
+    echo "  1) Fetch a Single File (e.g. /etc/nginx/nginx.conf)"
+    echo "  2) Fetch an Entire Directory (e.g. /etc/nginx/conf.d/)"
+    read -r -p "Select option [1-2]: " fetch_mode
+    if [[ "$fetch_mode" == "1" ]]; then
+        echo -ne "\nEnter the absolute path of the remote FILE to fetch: "
+    elif [[ "$fetch_mode" == "2" ]]; then
+        echo -ne "\nEnter the absolute path of the remote DIRECTORY to fetch: "
+    else
+        echo -e "${RED}Invalid selection.${NC}"
+        return
+    fi
+    read -r remote_path
+    if [ -z "$remote_path" ]; then
+        echo -e "${RED}Error: Remote path cannot be empty.${NC}"
+        return
+    fi
+    # Ensure main local directory on Git server exists
+    local local_fetch_dir="$LOCAL_DIR/$FETCH_DIR_NAME"
+    mkdir -p "$local_fetch_dir"
+    chmod 755 "$local_fetch_dir" 2>/dev/null || true
+    log_local "FETCH_START | Operator: $LOCAL_USER | Mode: $fetch_mode | Remote Path: $remote_path | Local Dir: $local_fetch_dir"
+    for target in "${ONLINE_TARGETS[@]}"; do
+        local remote_name="${TARGET_HOSTNAMES[$target]}"
+        local base_path_name
+        base_path_name=$(basename "$remote_path")
+        local stderr_tmp
+        stderr_tmp=$(mktemp)
+        # Extract IP address dynamically from the target string (e.g. nallen@192.168.40.213 -> 192.168.40.213)
+        local remote_ip="${target#*@}"
+        # Create a dedicated subdirectory named [hostname]_[IP]
+        local local_host_dir="$local_fetch_dir/${remote_name}_${remote_ip}"
+        mkdir -p "$local_host_dir"
+        chmod 755 "$local_host_dir" 2>/dev/null || true
+        # Local manifest file destination
+        local local_manifest="$local_host_dir/manifest.txt"
+        local border="=========================================================="
+        local header="OPERATOR: $LOCAL_USER | TARGET: $target ($remote_name) | FETCHING: $remote_path"
+        echo -e "\n${CYN}$border${NC}"
+        echo -e "${CYN}$header${NC}"
+        echo -e "${CYN}$border${NC}"
+        log_local "$border"
+        log_local "$header"
+        log_local "Host Fetch Start: $(date --rfc-3339=seconds)"
+        if [[ "$fetch_mode" == "1" ]]; then
+            # --- SINGLE FILE FETCH MODE ---
+            # Save the file with its original name inside the hostname_IP directory
+            local local_dest="$local_host_dir/${base_path_name}"
+            # stdout is written directly to the local file.
+            # stderr is captured in the temp file.
+            ssh -v -o StrictHostKeyChecking=no "$target" "sudo cat '$remote_path'" </dev/null > "$local_dest" 2> "$stderr_tmp"
+            local exit_code=$?
+            if [ "$exit_code" -eq 0 ]; then
+                echo -e "${GRN}[+] SUCCESS: File fetched and saved locally to:${NC}"
+                echo -e "    ${CYN}$local_dest${NC}"
+                log_local "FETCH_SUCCESS_FILE: target=$target | saved_to=$local_dest"
+                # Write record to manifest file
+                echo "$(date '+%Y-%m-%d %H:%M:%S') | Type: FILE | Local: $base_path_name | Remote: $remote_path" >> "$local_manifest"
+            else
+                echo -e "${RED}[-] FAILURE: Failed to fetch file from $target.${NC}"
+                echo -e "${RED}--- DETAILED TROUBLESHOOTING LOGS (SSHD & CAT TRACE) ---${NC}"
+                grep -v -i -E \
+                "^(debug[1-3]:|transferred:|bytes per second:|authenticated to|kex_|ssh2_|local version|channel 0|requesting \
+                |entering interactive|pledge:|client_input|remote: |sending environment|sending command)" < "$stderr_tmp" \
+                | add_timestamps
+                log_local "FETCH_FAILURE_FILE: target=$target | Exit Code=$exit_code"
+            fi
+
+        else
+            # --- RECURSIVE DIRECTORY FETCH MODE (Tar Streaming) ---
+            # Extract the folder as an intact sub-directory inside the hostname_IP directory
+            local local_dest_dir="$local_host_dir/${base_path_name}"
+            mkdir -p "$local_dest_dir"
+
+            # 1. SSH launches "sudo tar" which packs the remote directory and streams it to stdout.
+            # 2. Local tar receives standard input over the pipeline and extracts it directly into local_dest_dir.
+            # 3. Connection and system standard error are captured in stderr_tmp.
+            ssh -v -o StrictHostKeyChecking=no "$target" "sudo tar -czf - -C '$remote_path' ." </dev/null 2> "$stderr_tmp" | tar -xzf - -C "$local_dest_dir"
+            local exit_code=${PIPESTATUS[0]}
+
+            if [ "$exit_code" -eq 0 ]; then
+                echo -e "${GRN}[+] SUCCESS: Directory recursively fetched and extracted locally to:${NC}"
+                echo -e "    ${CYN}$local_dest_dir/${NC}"
+                log_local "FETCH_SUCCESS_DIR: target=$target | saved_to=$local_dest_dir"
+                
+                # Write record to manifest file
+                echo "$(date '+%Y-%m-%d %H:%M:%S') | Type: DIR  | Local: $base_path_name/ | Remote: $remote_path" >> "$local_manifest"
+            else
+                rm -rf "$local_dest_dir"
+                # Clean up the hostname_IP directory if it remains empty
+                rmdir "$local_host_dir" 2>/dev/null || true
+                echo -e "${RED}[-] FAILURE: Failed to fetch directory from $target.${NC}"
+                echo -e "${RED}--- DETAILED TROUBLESHOOTING LOGS (SSHD & TAR TRACE) ---${NC}"
+                grep -v -i -E \
+                "^(debug[1-3]:|transferred:|bytes per second:|authenticated to|kex_|ssh2_|local version|channel 0|requesting \
+                |entering interactive|pledge:|client_input|remote: |sending environment|sending command)" < "$stderr_tmp" \
+                | add_timestamps
+                log_local "FETCH_FAILURE_DIR: target=$target | Exit Code=$exit_code"
+            fi
+        fi
+        # Append connection logs to master log
+        if [ -s "$stderr_tmp" ]; then
+            log_local "--- [$target] FETCH ERROR/DEBUG OUTPUT ---"
+            add_timestamps < "$stderr_tmp" >> "$LOCAL_LOG_FILE"
+        fi
+        log_local "Host Fetch Finish: $(date --rfc-3339=seconds)"
         log_local "$border"
 
-        rm -f "$stdout_tmp" "$stderr_tmp"
+        rm -f "$stderr_tmp"
     done
 }
 
@@ -364,39 +445,36 @@ if ! mkdir -p "$LOG_DIR"; then
     exit 1
 fi
 chmod 777 "$LOG_DIR" 2>/dev/null || true
-
 TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
 LOCAL_LOG_FILE="$LOG_DIR/automation_${LOCAL_USER}_$TIMESTAMP.log"
 touch "$LOCAL_LOG_FILE"
 chmod 644 "$LOCAL_LOG_FILE" 2>/dev/null || true
-
 echo "--- Local Automation Orchestration Master Log Started ---" > "$LOCAL_LOG_FILE"
 log_local "Control runner initialized by operator: $LOCAL_USER"
-
 # Force environment and target validation pipeline immediately upon startup
 setup_environment_and_targets
-
 # Main Interface Loop
 while true; do
     if ! [ -t 0 ]; then
         echo -e "${RED}ERROR: Script requires an interactive terminal. Exiting.${NC}"
         break
     fi
-    
     # Display the menu locked into the currently active target environment
     echo -e "\n--- ${CYN}Automation Orchestrator Menu (Operator: $LOCAL_USER)${NC} ---"
-    echo -e "${BLU}Active Env: $CURRENT_ENV | Online Targets: ${#ONLINE_TARGETS[@]} / ${#ACTIVE_TARGETS[@]} | Log Level: DEEP_VERBOSE_ALWAYS${NC}"
+    echo -e "${BLU}Active Env: $CURRENT_ENV | Online Targets: ${#ONLINE_TARGETS[@]} / ${#ACTIVE_TARGETS[@]} \
+| Log Level: DEEP_VERBOSE_ALWAYS${NC}"
     echo "  1) Run Ad-hoc Command"
     echo "  2) Run Automated Script (Pre-installed on targets)"
-    echo "  3) Change Target Environment / Reselect Targets"
-    echo "  4) Exit"
-    read -r -p "Enter choice [1-4]: " choice
-
+    echo "  3) Fetch File/Directory from Targets (Saves Locally)"
+    echo "  4) Change Target Environment / Reselect Targets"
+    echo "  5) Exit"
+    read -r -p "Enter choice [1-5]: " choice
     case $choice in
         1) execute_remote_task "command" ;;
         2) execute_remote_task "script" ;;
-        3) setup_environment_and_targets ;;
-        4) log_local "USER ACTION: Exit."; echo "Exiting."; break ;;
+        3) fetch_remote_path ;;
+        4) setup_environment_and_targets ;;
+        5) log_local "USER ACTION: Exit."; echo "Exiting."; break ;;
         *) echo -e "${YLW}Invalid choice. Try again.${NC}" ;;
     esac
 done
