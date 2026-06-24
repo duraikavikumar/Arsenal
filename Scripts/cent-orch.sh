@@ -374,17 +374,32 @@ fetch_remote_path() {
             # --- SINGLE FILE FETCH MODE ---
             # Save the file with its original name inside the hostname_IP directory
             local local_dest="$local_host_dir/${base_path_name}"
-            # stdout is written directly to the local file.
-            # stderr is captured in the temp file.
-            ssh -v -o StrictHostKeyChecking=no "$target" "sudo cat '$remote_path'" </dev/null > "$local_dest" 2> "$stderr_tmp"
+            # Check if file already exists with content. If so, append timestamp for versioning.
+            if [ -s "$local_dest" ]; then
+                local timestamp
+                timestamp=$(date '+%Y-%m-%d_%H-%M-%S')
+                local_dest="${local_dest}_${timestamp}"
+                echo -e "${YLW}[i] Conflict Detected: Saving as versioned filename: $(basename "$local_dest")${NC}"
+            fi
+            # Stage in a local temporary file first (Atomic Writing)
+            local local_tmp_dest
+            local_tmp_dest=$(mktemp "$local_host_dir/tmp_fetch_XXXXXX")
+            # stdout streams to temp file. stderr captured separately.
+            ssh -v -o StrictHostKeyChecking=no "$target" "sudo cat '$remote_path'" </dev/null > "$local_tmp_dest" 2> "$stderr_tmp"
             local exit_code=$?
-            if [ "$exit_code" -eq 0 ]; then
-                echo -e "${GRN}[+] SUCCESS: File fetched and saved locally to:${NC}"
+            # Only commit the file if SSH succeeded AND the temp file actually contains data
+            if [ "$exit_code" -eq 0 ] && [ -s "$local_tmp_dest" ]; then
+                mv "$local_tmp_dest" "$local_dest"
+                echo -e "${GRN}[+] SUCCESS: File fetched and committed locally to:${NC}"
                 echo -e "    ${CYN}$local_dest${NC}"
                 log_local "FETCH_SUCCESS_FILE: target=$target | saved_to=$local_dest"
                 # Write record to manifest file
-                echo "$(date '+%Y-%m-%d %H:%M:%S') | Type: FILE | Local: $base_path_name | Remote: $remote_path" >> "$local_manifest"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') | Type: FILE \
+                | Local: $(basename "$local_dest") | Remote: $remote_path" >> "$local_manifest"
             else
+                # Clean up empty or failed temp file
+                rm -f "$local_tmp_dest"
+                rmdir "$local_host_dir" 2>/dev/null || true
                 echo -e "${RED}[-] FAILURE: Failed to fetch file from $target.${NC}"
                 echo -e "${RED}--- DETAILED TROUBLESHOOTING LOGS (SSHD & CAT TRACE) ---${NC}"
                 grep -v -i -E \
@@ -393,29 +408,40 @@ fetch_remote_path() {
                 | add_timestamps
                 log_local "FETCH_FAILURE_FILE: target=$target | Exit Code=$exit_code"
             fi
-
         else
             # --- RECURSIVE DIRECTORY FETCH MODE (Tar Streaming) ---
             # Extract the folder as an intact sub-directory inside the hostname_IP directory
             local local_dest_dir="$local_host_dir/${base_path_name}"
-            mkdir -p "$local_dest_dir"
-
-            # 1. SSH launches "sudo tar" which packs the remote directory and streams it to stdout.
-            # 2. Local tar receives standard input over the pipeline and extracts it directly into local_dest_dir.
-            # 3. Connection and system standard error are captured in stderr_tmp.
-            ssh -v -o StrictHostKeyChecking=no "$target" "sudo tar -czf - -C '$remote_path' ." </dev/null 2> "$stderr_tmp" | tar -xzf - -C "$local_dest_dir"
+            # Check if directory already exists. If so, append timestamp for versioning.
+            if [ -d "$local_dest_dir" ]; then
+                local timestamp
+                timestamp=$(date '+%Y-%m-%d_%H-%M-%S')
+                local_dest_dir="${local_dest_dir}_${timestamp}"
+                echo -e "${YLW}[i] Conflict Detected: Saving as versioned directory: $(basename "$local_dest_dir")${NC}"
+            fi
+            # Stage in a local temporary directory (Atomic Writing)
+            local local_tmp_dir
+            local_tmp_dir=$(mktemp -d "$local_host_dir/tmp_dir_XXXXXX")
+            # Extract directly into the temporary directory
+            ssh -v -o StrictHostKeyChecking=no \
+            "$target" "sudo tar -czf - -C '$remote_path' ." </dev/null 2> "$stderr_tmp" \
+            | tar -xzf - -C "$local_tmp_dir"
             local exit_code=${PIPESTATUS[0]}
-
-            if [ "$exit_code" -eq 0 ]; then
-                echo -e "${GRN}[+] SUCCESS: Directory recursively fetched and extracted locally to:${NC}"
+            # Verify extraction succeeded and directory is not empty
+            # (We check if it has more than '.' and '..' inside)
+            local file_count
+            file_count=$(find "$local_tmp_dir" -mindepth 1 | wc -l)
+            if [ "$exit_code" -eq 0 ] && [ "$file_count" -gt 0 ]; then
+                mv "$local_tmp_dir" "$local_dest_dir"
+                echo -e "${GRN}[+] SUCCESS: Directory recursively fetched and committed locally to:${NC}"
                 echo -e "    ${CYN}$local_dest_dir/${NC}"
                 log_local "FETCH_SUCCESS_DIR: target=$target | saved_to=$local_dest_dir"
-                
                 # Write record to manifest file
-                echo "$(date '+%Y-%m-%d %H:%M:%S') | Type: DIR  | Local: $base_path_name/ | Remote: $remote_path" >> "$local_manifest"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') | Type: DIR  \
+                | Local: $(basename "$local_dest_dir")/ | Remote: $remote_path" >> "$local_manifest"
             else
-                rm -rf "$local_dest_dir"
-                # Clean up the hostname_IP directory if it remains empty
+                # Clean up failed temp directory
+                rm -rf "$local_tmp_dir"
                 rmdir "$local_host_dir" 2>/dev/null || true
                 echo -e "${RED}[-] FAILURE: Failed to fetch directory from $target.${NC}"
                 echo -e "${RED}--- DETAILED TROUBLESHOOTING LOGS (SSHD & TAR TRACE) ---${NC}"
