@@ -1,12 +1,13 @@
 #!/bin/bash
 
 # ========================================================================
-# Centralized Password Expiry Orchestrator (Dual Inventory Engine Version)
+# Centralized Password Expiry Orchestrator
 # Execute this script ONLY on the Central Management / Hub Server
 # ========================================================================
 
 # Global Configuration
 ADMIN_EMAILS="duraikavikumar@aliceblueindia.com"
+VERIFIED_SENDER="notification@aliceblueindia.com"
 HUB_LOG="/var/log/central_password_expiry.log"
 TODAY=$(date +%s)
 
@@ -26,14 +27,17 @@ TODAY=$(date +%s)
 # INVENTORY METHOD B: External Host File (ACTIVE DEFAULT)
 # (Comment out this block and uncomment Method A if switching modes)
 # ========================================================================
-INVENTORY_FILE="/home/apocalypto/scripts/host.txt"
+INVENTORY_FILE="/home/nallen/automation/pas_exp_alert/hosts_dev_uat.txt"
 
 if [ ! -f "$INVENTORY_FILE" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] Configured inventory file missing at: $INVENTORY_FILE" >> "$HUB_LOG"
     exit 1
 fi
-# Map the lines of the text file directly into the iterable memory array
-IFS=$'\n' read -d '' -r -a PROD_FLEET < "$INVENTORY_FILE"
+
+# Read lines, strip out exact duplicate profiles automatically, and populate the array
+mapfile -t PROD_FLEET < <(
+    grep -Ev '^\s*($|#)' "$INVENTORY_FILE" | sort -u
+)
 TOTAL_NODES=${#PROD_FLEET[@]}
 
 # Logging Engine
@@ -46,7 +50,19 @@ log_hub() {
     logger -t central-password-alert "[$LEVEL] $MSG"
 }
 
-log_hub "INFO" "Initiating centralized orchestration sequence across $TOTAL_NODES variant credential nodes."
+escape_html() {
+    local s="$1"
+    s="${s//&/&amp;}"
+    s="${s//</&lt;}"
+    s="${s//>/&gt;}"
+    s="${s//\"/&quot;}"
+    s="${s//\'/&#39;}"
+    printf '%s' "$s"
+}
+
+log_hub "INFO" "========================================================================"
+log_hub "INFO" "START: Initiating centralized orchestration sequence across $TOTAL_NODES managed nodes."
+log_hub "INFO" "========================================================================"
 
 # Validate local mail subsystem dependency
 if ! command -v mail &> /dev/null; then
@@ -68,24 +84,46 @@ DIGEST_BANNER_TEXT="🟢 USER PASSWORD CHECK COMPLETED: NO ACTION REQUIRED"
 # ========================================================================
 # Fleet Scanning Phase
 # ========================================================================
+NODE_COUNT=0
 for NODE_PROFILE in "${PROD_FLEET[@]}"; do
     # Skip clean comments or accidental white space lines in file arrays
     [[ -z "$NODE_PROFILE" || "$NODE_PROFILE" =~ ^# ]] && continue 
 
-    # Dynamically extract username and target host targets
-    SSH_USER=$(echo "$NODE_PROFILE" | cut -d'@' -f1)
-    TARGET_NODE=$(echo "$NODE_PROFILE" | cut -d'@' -f2)
-
-    log_hub "INFO" "Establishing secure session context with production node: [$TARGET_NODE] using user account: [$SSH_USER]"
+    ((NODE_COUNT++))
     
-    # Remote execution stream collector (Queries server hostname dynamically)
-    if ! REMOTE_DATA=$(ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "${SSH_USER}@${TARGET_NODE}" "
-        # Capture the local system fully-qualified hostname natively
+    if [[ ! "$NODE_PROFILE" =~ ^[^@]+@[^@]+$ ]]; then
+        log_hub "WARN" "Skipping malformed inventory entry: $NODE_PROFILE"
+        continue
+    fi
+
+    SSH_USER="${NODE_PROFILE%@*}"
+    TARGET_NODE="${NODE_PROFILE#*@}"
+
+    log_hub "INFO" "[$NODE_COUNT/$TOTAL_NODES] Connecting to remote endpoint: [$TARGET_NODE] using admin profile: [$SSH_USER]..."
+    
+    # Remote execution stream collector 
+    # FIXED: Backslash escapes implemented on all awk expressions ($2 -> \$2) and loop parameters
+    # FIXED: Substring search filters entire line ($0) for nologin/false keywords to survive GECOS field expansion shifts
+    if ! REMOTE_DATA=$(ssh -n -q -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR "${SSH_USER}@${TARGET_NODE}" "
         LOCAL_HOSTNAME=\$(hostname -f 2>/dev/null || hostname)
-        
+        set -euo pipefail
         while read -r USER; do
-            MAX_DAYS=\$(sudo chage -l \"\$USER\" 2>/dev/null | grep \"Maximum number of days between password change\" | awk -F: '{print \$2}' | tr -d ' ')
-            LAST_CHANGE_STR=\$(sudo chage -l \"\$USER\" 2>/dev/null | grep \"Last password change\" | awk -F: '{print \$2}')
+            ACCOUNT_EXEMPT=\"NO\"
+            CHAGE_OUTPUT=\$(sudo chage -l \"\$USER\" 2>/dev/null) || continue
+
+            MAX_DAYS=\$(
+                awk -F: '/Maximum number/{
+                    gsub(/ /,\"\",\$2)
+                    print \$2
+                }' <<< \"\$CHAGE_OUTPUT\"
+            )
+
+            LAST_CHANGE_STR=\$(
+                awk -F: '/Last password change/{
+                    sub(/^ */,\"\",\$2)
+                    print \$2
+                }' <<< \"\$CHAGE_OUTPUT\"
+            )
             
             if [ -z \"\$MAX_DAYS\" ] || [ -z \"\$LAST_CHANGE_STR\" ]; then continue; fi
             
@@ -95,19 +133,26 @@ for NODE_PROFILE in "${PROD_FLEET[@]}"; do
             
             USER_EMAIL=\"\"
             if [[ \"\$USER_GECOS_OTHER\" == *\"email=\"* ]]; then
-                USER_EMAIL=\$(echo \"\$USER_GECOS_OTHER\" | sed 's/.*email=\([^,]*\).*/\1/' | tr ' ' ',')
+                USER_EMAIL=\$(echo \"\$USER_GECOS_OTHER\" | sed 's/.*email=\([^,]*\).*/\1/' | xargs | tr -s ' ' ',')
             fi
             
             if [ \"\$MAX_DAYS\" -eq -1 ] || [ \"\$MAX_DAYS\" -eq 99999 ]; then
-                echo \"\$LOCAL_HOSTNAME|\$USER|\$MAX_DAYS|\$LAST_CHANGE_STR|\$USER_FULL_NAME|\$USER_EMAIL\"
-                continue
+                ACCOUNT_EXEMPT=\"YES\"
             fi
             
-            echo \"\$LOCAL_HOSTNAME|\$USER|\$MAX_DAYS|\$LAST_CHANGE_STR|\$USER_FULL_NAME|\$USER_EMAIL\"
-        done < <(awk -F: '(\$3 == 0 || \$3 >= 1000) && \$1 != \"nobody\" {print \$1}' /etc/passwd)
+            echo \"\$LOCAL_HOSTNAME|\$USER|\$MAX_DAYS|\$ACCOUNT_EXEMPT|\$LAST_CHANGE_STR|\$USER_FULL_NAME|\$USER_EMAIL\"
+        done < <(
+            awk -F: '
+                (\$3==0 || \$3>=1000) &&
+                \$1 != \"nobody\" &&
+                \$0 !~ /(nologin|false)/ &&
+                \$NF ~ /\/(bash|sh|dash)\$/ {
+                    print \$1
+                }
+            ' /etc/passwd
+        )
     " 2>>"$HUB_LOG"); then
-        log_hub "ERROR" "Failed to gather security context payload from host node: [$TARGET_NODE] using user account: [$SSH_USER]"
-        
+        log_hub "WARN" "[$NODE_COUNT/$TOTAL_NODES] Connection failed or returned error status for host: [$TARGET_NODE]"
         FLEET_DASHBOARD_HTML+="<div style='border: 1px solid #ebccd1; background-color: #f2dede; color: #a94442; padding: 12px; margin-top: 20px; border-radius: 4px; font-weight: bold;'>🚨 CONNECTION FAILURE: Hub network failed to communicate with managed host node [$TARGET_NODE] using credential profile [$SSH_USER]. Please verify SSH key authorization state.</div>"
         continue
     fi
@@ -118,35 +163,56 @@ for NODE_PROFILE in "${PROD_FLEET[@]}"; do
     SERVER_FLAGGED_COUNT=0
     SERVER_COMPLIANT_COUNT=0
     DETECTED_HOSTNAME=""
+    SERVER_USER_COUNT=0
 
     # ========================================================================
     # Centralized Metrics Processing Engine
     # ========================================================================
-    while IFS='|' read -r REMOTE_HOST_NAME USER MAX_DAYS LAST_CHANGE_STR USER_FULL_NAME USER_EMAIL; do
+    while IFS='|' read -r REMOTE_HOST_NAME USER MAX_DAYS ACCOUNT_EXEMPT LAST_CHANGE_STR USER_FULL_NAME USER_EMAIL; do
         [ -z "$USER" ] && continue
         ((TOTAL_CHECKED_USERS++))
+        ((SERVER_USER_COUNT++))
         
-        # Save the hostname returned by the data stream
         [ -z "$DETECTED_HOSTNAME" ] && DETECTED_HOSTNAME="$REMOTE_HOST_NAME"
 
         if [ -n "$USER_FULL_NAME" ]; then
             DISPLAY_NAME="$USER_FULL_NAME"
+            DISPLAY_NAME=$(escape_html "$DISPLAY_NAME")
+            USER_FULL_NAME=$(escape_html "$USER_FULL_NAME")
+            USER=$(escape_html "$USER")
         else
             DISPLAY_NAME="System User"
         fi
 
-        if [ "$MAX_DAYS" = "NEVER" ]; then
+        # Process non-expiring accounts discovered via Option A mapping logic
+        if [[ "$ACCOUNT_EXEMPT" == "YES" ]]; then
             ((SERVER_COMPLIANT_COUNT++))
             ((TOTAL_COMPLIANT_USERS++))
-            SERVER_COMPLIANT_ROWS+="<tr><td style='padding:8px;border:1px solid #ddd;color:#555;'>$DISPLAY_NAME</td><td style='padding:8px;border:1px solid #ddd;font-family:monospace;color:#555;'>$USER</td><td style='padding:8px;border:1px solid #ddd;color:#28a745;font-weight:bold;'>Policy Exempt (Never Expires)</td><td style='padding:8px;border:1px solid #ddd;'><span style='background-color:#5cb85c;color:white;padding:2px 6px;font-size:11px;font-weight:bold;border-radius:3px;'>EXEMPT</span></td></tr>"
+            log_hub "INFO" "  └─► Found User: [$USER] ($DISPLAY_NAME) -> STATUS: EXEMPT (Never Expires)"
+            SERVER_COMPLIANT_ROWS+="<tr><td style='padding:8px;border:1px solid #ddd;color:#555;'>$DISPLAY_NAME</td><td style='padding:8px;border:1px solid #ddd;font-family:monospace;color:#555;'>$USER</td><td style='padding:8px;border:1px solid #ddd;color:#28a745;font-weight:bold;'>Password Expiry Disabled (Configured Max Age: $MAX_DAYS)</td><td style='padding:8px;border:1px solid #ddd;'><span style='background-color:#5cb85c;color:white;padding:2px 6px;font-size:11px;font-weight:bold;border-radius:3px;'>EXEMPT</span></td></tr>"
             continue
         fi
 
-        LAST_CHANGE_EPOCH=$(date -d "$LAST_CHANGE_STR" +%s 2>/dev/null)
-        if [ -z "$LAST_CHANGE_EPOCH" ]; then continue; fi
+        case "$LAST_CHANGE_STR" in
+            [nN]ever)
+                log_hub "INFO" "User [$USER] has never changed their password."
+                continue
+                ;;
+        esac
+        
+        if ! LAST_CHANGE_EPOCH=$(date -d "$LAST_CHANGE_STR" +%s 2>/dev/null); then
+            log_hub "WARN" "Invalid password change date for user $USER : $LAST_CHANGE_STR"
+            continue
+        fi
 
         EXPIRY_EPOCH=$((LAST_CHANGE_EPOCH + (MAX_DAYS * 86400)))
-        DAYS_LEFT=$(( (EXPIRY_EPOCH - TODAY) / 86400 ))
+        SECONDS_LEFT=$((EXPIRY_EPOCH-TODAY))
+
+        if ((SECONDS_LEFT > 0)); then
+            DAYS_LEFT=$(((SECONDS_LEFT + 86399)/86400))
+        else
+            DAYS_LEFT=$((SECONDS_LEFT/86400))
+        fi
 
         TRIGGER_ALERT=false
         if [ "$DAYS_LEFT" -le 7 ]; then
@@ -163,6 +229,7 @@ for NODE_PROFILE in "${PROD_FLEET[@]}"; do
                 COLOR="#d9534f" 
                 EMOJI="🔴"
                 STATUS_TEXT="EXPIRED ($ABS_DAYS days ago)"
+                log_hub "WARN" "  └─► Found User: [$USER] ($DISPLAY_NAME) -> STATUS: CRITICAL (Expired $ABS_DAYS days ago!)"
                 USER_REM="Your account access has expired on production environments. Please contact the <strong>IT Support Team</strong> immediately at <a href='mailto:occurrence@aliceblueindia.com'>occurrence@aliceblueindia.com</a> to verify your profile status and restore server access permissions."
                 
                 HIGHEST_SEVERITY="HIGH"
@@ -175,6 +242,7 @@ for NODE_PROFILE in "${PROD_FLEET[@]}"; do
                 COLOR="#d9534f" 
                 EMOJI="🔴"
                 STATUS_TEXT="EXPIRING TODAY"
+                log_hub "WARN" "  └─► Found User: [$USER] ($DISPLAY_NAME) -> STATUS: CRITICAL (Expires TODAY!)"
                 USER_REM="Your account access expires today. Please contact the <strong>IT Support Team</strong> immediately at <a href='mailto:occurrence@aliceblueindia.com'>occurrence@aliceblueindia.com</a> to complete your compliance update and prevent access lockout."
                 
                 HIGHEST_SEVERITY="HIGH"
@@ -187,6 +255,7 @@ for NODE_PROFILE in "${PROD_FLEET[@]}"; do
                 COLOR="#f0ad4e" 
                 EMOJI="🟡"
                 STATUS_TEXT="Expiring in $DAYS_LEFT day(s)"
+                log_hub "INFO" "  └─► Found User: [$USER] ($DISPLAY_NAME) -> STATUS: WARNING ($DAYS_LEFT days remaining)"
                 USER_REM="Please note that your password security lifetime limit will expire shortly. Kindly raise a concern with the <strong>IT Team</strong> via <a href='mailto:occurrence@aliceblueindia.com'>occurrence@aliceblueindia.com</a> to securely rotate your access keys."
                 
                 if [ "$HIGHEST_SEVERITY" != "HIGH" ]; then
@@ -199,10 +268,32 @@ for NODE_PROFILE in "${PROD_FLEET[@]}"; do
 
             SERVER_FLAGGED_ROWS+="<tr><td style='padding:8px;border:1px solid #ddd;'>$DISPLAY_NAME</td><td style='padding:8px;border:1px solid #ddd;font-family:monospace;'>$USER</td><td style='padding:8px;border:1px solid #ddd;color:$COLOR;font-weight:bold;'>$STATUS_TEXT</td><td style='padding:8px;border:1px solid #ddd;'><span style='background-color:$COLOR;color:white;padding:2px 6px;font-size:11px;font-weight:bold;border-radius:3px;'>$SEVERITY</span></td></tr>"
 
-            # Dispatch personalized notification out to User Inbox directly (uses real hostname)
-            if [ -n "$USER_EMAIL" ]; then
-                DISPLAY_HOST="${DETECTED_HOSTNAME:-$TARGET_NODE}"
-                SUBJECT_LINE="[$SEVERITY] Password Policy Alert: '$USER' on $DISPLAY_HOST"
+            # Dispatch personalized notification out to User Inbox directly
+            DISPLAY_HOST="${DETECTED_HOSTNAME:-$TARGET_NODE}"
+            SUBJECT_LINE="[$SEVERITY] Password Policy Alert: '$USER' on $DISPLAY_HOST"
+            
+            # ========================================================================
+            # PLAIN-TEXT AUDIT LOG FOR USER ALERTS
+            # ========================================================================
+            {
+                echo "------------------------------------------------------------"
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] [AUDIT-OUTBOUND] INDIVIDUAL USER ALERTS"
+                echo "    [RECIPIENT EMAIL] : ${USER_EMAIL:-EMPTY / UNCONFIGURED IN GECOS}"
+                echo "    [TARGET NODE]     : $DISPLAY_HOST ($TARGET_NODE)"
+                echo "    [ACCOUNT PROFILE] : Username: $USER | Display Name: $DISPLAY_NAME"
+                echo "    [TIMELINE METRIC] : $STATUS_TEXT ($DAYS_LEFT Days Left)"
+                echo "    [SEVERITY WEIGHT] : $SEVERITY"
+            } >> "$HUB_LOG"
+            
+            if [ -z "$USER_EMAIL" ]; then
+                {
+                    echo "    [ROUTING STATUS]  : SKIPPED (Cannot dispatch email, GECOS metadata field empty)"
+                    echo "------------------------------------------------------------"
+                } >> "$HUB_LOG"
+            else
+                echo "    [ROUTING STATUS]  : ATTEMPTING DELIVERY" >> "$HUB_LOG"
+                MAIL_ERROR=$(mktemp)
+
                 read -r -d '' USER_BODY <<EOM
 <html>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333;">
@@ -240,17 +331,38 @@ for NODE_PROFILE in "${PROD_FLEET[@]}"; do
 </body>
 </html>
 EOM
-                echo "$USER_BODY" | mail -a "MIME-Version: 1.0" -a "Content-Type: text/html; charset=UTF-8" -s "$EMOJI $SUBJECT_LINE" "$USER_EMAIL" 2>>"$HUB_LOG"
+                # FIXED: Here-String execution mapping used to maintain clean standard input loop health
+                if timeout 20 mail \
+                    -a "MIME-Version: 1.0" \
+                    -a "Content-Type: text/html; charset=UTF-8" \
+                    -a "From: SSO-Team <$VERIFIED_SENDER>" \
+                    -r "$VERIFIED_SENDER" \
+                    -s "$EMOJI $SUBJECT_LINE" \
+                    "$USER_EMAIL" <<< "$USER_BODY" \
+                    >"$MAIL_ERROR" 2>&1
+                then
+                    echo "    [ROUTING STATUS]  : SMTP ACCEPTED" >> "$HUB_LOG"
+                else
+                    echo "    [ROUTING STATUS]  : SMTP FAILED" >> "$HUB_LOG"
+                    cat "$MAIL_ERROR" >> "$HUB_LOG"
+                fi
+
+                rm -f "$MAIL_ERROR"
+                echo "------------------------------------------------------------" >> "$HUB_LOG"
             fi
         else
             ((SERVER_COMPLIANT_COUNT++))
             ((TOTAL_COMPLIANT_USERS++))
+            log_hub "INFO" "  └─► Found User: [$USER] ($DISPLAY_NAME) -> STATUS: PASSED ($DAYS_LEFT days remaining)"
             SERVER_COMPLIANT_ROWS+="<tr><td style='padding:8px;border:1px solid #ddd;color:#555;'>$DISPLAY_NAME</td><td style='padding:8px;border:1px solid #ddd;font-family:monospace;color:#555;'>$USER</td><td style='padding:8px;border:1px solid #ddd;color:#28a745;'>Active ($DAYS_LEFT days left)</td><td style='padding:8px;border:1px solid #ddd;'><span style='background-color:#28a745;color:white;padding:2px 6px;font-size:11px;font-weight:bold;border-radius:3px;'>PASSED</span></td></tr>"
         fi
     done <<< "$REMOTE_DATA"
 
+    # Log localized completion numbers so tail shows immediate state progress
+    log_hub "INFO" "Finished node [${DETECTED_HOSTNAME:-$TARGET_NODE}]. Processed $SERVER_USER_COUNT users. (Alerts: $SERVER_FLAGGED_COUNT, Safe: $SERVER_COMPLIANT_COUNT)"
+
     # Default fallback to target connection configuration strings if remote context fails to evaluate
-    DISPLAY_SERVER_HEADER="${DETECTED_HOSTNAME:-[Hostname Query Failed]}"
+    DISPLAY_SERVER_HEADER="${DETECTED_HOSTNAME:-$TARGET_NODE}"
 
     # ========================================================================
     # HTML Component Compiler for the Current Target Server Node
@@ -313,7 +425,26 @@ done
 # ------------------------------------------------------------------------
 # POST-SCAN MASTER REPORT COMPILATION & DELIVERY
 # ------------------------------------------------------------------------
+log_hub "INFO" "========================================================================"
+log_hub "INFO" "POST-SCAN: Compiling Master HTML Fleet Digest Report Matrix..."
+log_hub "INFO" "========================================================================"
+
 ADMIN_SUBJECT="⚙️ SYSTEM FLEET DIGEST: [$HIGHEST_SEVERITY] Password Expiry Report Matrix"
+
+# ========================================================================
+# PLAIN-TEXT AUDIT LOG FOR MASTER ADMIN DIGEST
+# ========================================================================
+{
+    echo "============================================================"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [AUDIT-OUTBOUND] MASTER ADMIN FLEET DIGEST"
+    echo "    [RECIPIENT TARGETS] : $ADMIN_EMAILS"
+    echo "    [FLEET STATISTICS]  : Checked Nodes: $TOTAL_NODES"
+    echo "                        : Monitored Accounts: $TOTAL_CHECKED_USERS"
+    echo "                        : Compliant Profiles: $TOTAL_COMPLIANT_USERS"
+    echo "                        : Flagged Anomalies: $TOTAL_FLAGGED_ALERTS"
+    echo "    [HIGHEST SEVERITY]  : $HIGHEST_SEVERITY"
+    echo "============================================================"
+} >> "$HUB_LOG"
 
 read -r -d '' ADMIN_BODY <<EOM
 <html>
@@ -330,7 +461,7 @@ read -r -d '' ADMIN_BODY <<EOM
         <table style="border-collapse: collapse; width: 100%; margin-bottom: 25px; margin-top: 15px; background-color: #ffffff; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
             <tr style="background-color: #f9f9f9;"><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold; width: 40%;">Managed Network Nodes:</td><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold; color: #0056b3;">$TOTAL_NODES Servers Scanned</td></tr>
             <tr><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Total Monitored Profiles:</td><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">$TOTAL_CHECKED_USERS Accounts Total</td></tr>
-            <tr style="background-color: #f9f9f9;"><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Total Flagged Profiles:</td><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold; color: #d9534f;">$TOTAL_FLAGGED_ALERTS Exception(s)</td></tr>
+            <tr style="background-color: #f9f9f9;"><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold; color: #d9534f;">Total Flagged Profiles:</td><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold; color: #d9534f;">$TOTAL_FLAGGED_ALERTS Exception(s)</td></tr>
             <tr><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Total Compliant Profiles:</td><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold; color: #28a745;">$TOTAL_COMPLIANT_USERS Verified Safe (Exempt Included)</td></tr>
         </table>
 
@@ -357,10 +488,30 @@ read -r -d '' ADMIN_BODY <<EOM
 </html>
 EOM
 
-if echo "$ADMIN_BODY" | mail -a "MIME-Version: 1.0" -a "Content-Type: text/html; charset=UTF-8" -s "$DIGEST_EMOJI $ADMIN_SUBJECT" "$ADMIN_EMAILS" 2>>"$HUB_LOG"; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] Consolidated fleet orchestration report successfully dispatched to $ADMIN_EMAILS." >> "$HUB_LOG"
+# ========================================================================
+# RUNTIME OVERRIDE: Localized Email Dispatch for Master Admin Digest
+# ========================================================================
+# Define temporary execution storage workspace file descriptor path
+TEMP_MAIL_BODY=$(mktemp /tmp/fleet_digest.XXXXXX.html)
+
+# Clean up the scratchpad file immediately to maintain filesystem hygiene
+trap 'rm -f "$TEMP_MAIL_BODY"' EXIT
+
+# Write the master HTML string down to disk safely
+echo "$ADMIN_BODY" > "$TEMP_MAIL_BODY"
+
+# Break email targets into clean bash array parameters to protect SMTP envelope fields
+IFS=',' read -r -a RECIPIENT_ARRAY <<< "$ADMIN_EMAILS"
+if timeout 20 mail -a "MIME-Version: 1.0" \
+        -a "Content-Type: text/html; charset=UTF-8" \
+        -a "From: SSO-Team <$VERIFIED_SENDER>" \
+        -r "$VERIFIED_SENDER" \
+        -s "$DIGEST_EMOJI $ADMIN_SUBJECT" "${RECIPIENT_ARRAY[@]}" < "$TEMP_MAIL_BODY"; then
+    log_hub "INFO" "Consolidated fleet orchestration report successfully dispatched to admin team."
 else
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] Failed to deliver master dashboard layout email." >> "$HUB_LOG"
+    log_hub "ERROR" "Failed to deliver master dashboard layout email."
 fi
 
-log_hub "INFO" "Fleet evaluation runtime execution sequence finalized cleanly."
+log_hub "INFO" "========================================================================"
+log_hub "INFO" "FINISH: Fleet evaluation runtime execution sequence completed cleanly."
+log_hub "INFO" "========================================================================"
