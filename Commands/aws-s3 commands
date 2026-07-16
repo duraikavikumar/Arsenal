@@ -1,1 +1,1 @@
-aws s3 sync test/ s3://ekycs.aliceblueonline.com/prod/test/ | tee -a s3_upload.log
+aws s3 sync Data/ s3://ekycs.aliceblueonline.com/EKYC_Filesystem_Backup/ | tee -a /var/log/s3_filesystem.log
