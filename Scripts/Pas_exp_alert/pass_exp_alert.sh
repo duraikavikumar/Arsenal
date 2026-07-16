@@ -45,7 +45,7 @@ COMPLIANT_TABLE_ROWS=""
 HIGHEST_SEVERITY="OK"
 DIGEST_EMOJI="🟢"
 DIGEST_COLOR="#28a745" # Default Compliant Green
-DIGEST_BANNER_TEXT="🟢 ALL SYSTEMS NOMINAL: CREDENTIAL POLICY COMPLIANT"
+DIGEST_BANNER_TEXT="🟢 USER PASSWORD CHECK COMPLETED: NO ACTION REQUIRED"
 
 # Loop through root (UID 0) and standard users (UID >= 1000) excluding nobody
 while read -r USER; do
@@ -79,6 +79,7 @@ while read -r USER; do
     USER_FULL_NAME=$(echo "$GECOS_FULL_STRING" | cut -d, -f1)
     # 2. Extract Email (5th comma-separated "other" slot)
     USER_GECOS_OTHER=$(echo "$GECOS_FULL_STRING" | cut -d, -f5)
+    
     USER_EMAIL=""
     if [[ "$USER_GECOS_OTHER" == *"email="* ]]; then
         # Extracts string and converts spaces to commas if multiple emails exist
@@ -113,7 +114,7 @@ while read -r USER; do
             HIGHEST_SEVERITY="HIGH"
             DIGEST_EMOJI="🔴"
             DIGEST_COLOR="#d9534f"
-            DIGEST_BANNER_TEXT="⚠️ SECURITY ALERT: ACTIVE LIFECYCLE LOCKOUT DETECTED"
+            DIGEST_BANNER_TEXT="⚠️ SECURITY ALERT: USER ACCOUNT LOCKOUT DETECTED"
             
         elif [ "$DAYS_LEFT" -eq 0 ]; then
             SEVERITY="HIGH / URGENT"
@@ -125,7 +126,7 @@ while read -r USER; do
             HIGHEST_SEVERITY="HIGH"
             DIGEST_EMOJI="🔴"
             DIGEST_COLOR="#d9534f"
-            DIGEST_BANNER_TEXT="⚠️ SECURITY ALERT: ACTIVE LIFECYCLE LOCKOUT DETECTED"
+            DIGEST_BANNER_TEXT="⚠️ SECURITY ALERT: USER ACCOUNT LOCKOUT DETECTED"
 
         elif [ "$DAYS_LEFT" -le 7 ] && [ "$DAYS_LEFT" -ge 1 ]; then
             SEVERITY="WARNING"
@@ -142,13 +143,8 @@ while read -r USER; do
             fi
         fi
 
-        # Append data row to the Flagged Admin Digest Matrix
-        ADMIN_TABLE_ROWS+="<tr>
-            <td style='padding: 8px; border: 1px solid #ddd;'>$DISPLAY_NAME</td>
-            <td style='padding: 8px; border: 1px solid #ddd; font-family: monospace;'>$USER</td>
-            <td style='padding: 8px; border: 1px solid #ddd; color: $COLOR; font-weight: bold;'>$STATUS_TEXT</td>
-            <td style='padding: 8px; border: 1px solid #ddd;'><span style='background-color: $COLOR; color: white; padding: 2px 6px; font-size: 11px; font-weight: bold; border-radius: 3px;'>$SEVERITY</span></td>
-        </tr>"
+        # Consolidated single-line tracking row insertion
+        ADMIN_TABLE_ROWS+="<tr><td style='padding:8px;border:1px solid #ddd;'>$DISPLAY_NAME</td><td style='padding:8px;border:1px solid #ddd;font-family:monospace;'>$USER</td><td style='padding:8px;border:1px solid #ddd;color:$COLOR;font-weight:bold;'>$STATUS_TEXT</td><td style='padding:8px;border:1px solid #ddd;'><span style='background-color:$COLOR;color:white;padding:2px 6px;font-size:11px;font-weight:bold;border-radius:3px;'>$SEVERITY</span></td></tr>"
 
         # Dispatch Immediate Custom Personalized Email directly to the affected User
         if [ -n "$USER_EMAIL" ]; then
@@ -156,35 +152,37 @@ while read -r USER; do
             read -r -d '' USER_BODY <<EOM
 <html>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333;">
-    <div style="background-color: $COLOR; color: white; padding: 15px; font-size: 18px; font-weight: bold; border-radius: 4px;">
-        $EMOJI ACCESS PROFILE ALERT: $SEVERITY
-    </div>
-    <p>Dear $DISPLAY_NAME,</p>
-    <p>This automated system message is to notify you regarding your login credential state on our corporate environments.</p>
-    
-    <table style="border-collapse: collapse; width: 100%; max-width: 500px; margin: 20px 0;">
-        <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; width: 40%;">Environment Name:</td><td style="padding: 8px; border: 1px solid #ddd;">$HOSTNAME</td></tr>
-        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Host IP Address:</td><td style="padding: 8px; border: 1px solid #ddd;">$HOST_IP</td></tr>
-        <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; width: 40%;">User Full Name:</td><td style="padding: 8px; border: 1px solid #ddd;">${USER_FULL_NAME:-[Not Configured]}</td></tr>
-        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">System Account ID:</td><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">$USER</td></tr>
-        <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; width: 40%;">Account Status:</td><td style="padding: 8px; border: 1px solid #ddd; color: $COLOR; font-weight: bold;">$STATUS_TEXT</td></tr>
-    </table>
+    <div style="max-width: 700px; margin: 0 auto;">
+        <div style="background-color: $COLOR; color: white; padding: 15px; font-size: 18px; font-weight: bold; border-radius: 4px;">
+            $EMOJI ACCESS PROFILE ALERT: $SEVERITY
+        </div>
+        <p>Dear $DISPLAY_NAME,</p>
+        <p>This automated system message is to notify you regarding your login credential state on our corporate environments.</p>
+        
+        <table style="border-collapse: collapse; width: 100%; margin: 20px 0;">
+            <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; width: 40%;">Environment Name:</td><td style="padding: 8px; border: 1px solid #ddd;">$HOSTNAME</td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Host IP Address:</td><td style="padding: 8px; border: 1px solid #ddd;">$HOST_IP</td></tr>
+            <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; width: 40%;">User Full Name:</td><td style="padding: 8px; border: 1px solid #ddd;">${USER_FULL_NAME:-[Not Configured]}</td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">System Account ID:</td><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">$USER</td></tr>
+            <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; width: 40%;">Account Status:</td><td style="padding: 8px; border: 1px solid #ddd; color: $COLOR; font-weight: bold;">$STATUS_TEXT</td></tr>
+        </table>
 
-    <div style="background-color: #f9f9f9; padding: 15px; border-left: 4px solid #0056b3; margin: 20px 0;">
-        <p style="margin: 0; font-size: 15px;">$USER_REM</p>
+        <div style="background-color: #f9f9f9; padding: 15px; border-left: 4px solid #0056b3; margin: 20px 0;">
+            <p style="margin: 0; font-size: 15px;">$USER_REM</p>
+        </div>
+    
+        <hr style="border: 0; border-top: 1px solid #eeeeee; margin-top: 30px; margin-bottom: 20px;">
+        
+        <!-- Custom Corporate Signature -->
+        <table style="box-sizing: border-box; border-collapse: collapse; caption-side: bottom; border: 1px solid rgb(221, 221, 221); empty-cells: show; max-width: 100%; font-size: 14px; font-family: Arial; color: rgb(65, 65, 65); background-color: rgb(255, 255, 255); width: 157.656px;">
+            <tbody>
+                <tr>
+                    <td style="box-sizing: border-box; border: 1px solid rgb(221, 221, 221); min-width: 5px; width: 313.976px;"><img src="https://ci3.googleusercontent.com/mail-sig/AIorK4wGFAUAtrdZEe9R2RlbmbRzH4Jx9FA0sX5D8Y6FLVxFfeuGhfDbLk9XD4VFw7eJLnkYrC2HQTVgYqOF" style="width: 300px;"></td>
+                    <td style="box-sizing: border-box; border: 1px solid rgb(221, 221, 221); min-width: 5px; width: 242.569px; vertical-align: middle; padding-left: 10px;"><span style="box-sizing: border-box; font-family: Ubuntu, sans-serif;"><span style="box-sizing: border-box; font-size: 20px; color: rgb(0, 0, 0);"><strong style="box-sizing: border-box; font-weight: 700;">SSO-TEAM</strong></span></span><br><span style="box-sizing: border-box; font-family: Poppins, sans-serif; font-size: 20px; color: rgb(74, 74, 74);">IT-DEPARTMENT</span><br><b style="box-sizing: border-box; font-weight: bolder; color: rgb(34, 34, 34); font-size: large; font-family: Arial;"><span style="color: rgb(0, 0, 0);"><img src="https://ci3.googleusercontent.com/mail-sig/AIorK4xuz4WgqtqL4VaddOC37AYma6ytFElvidGL7Lb1BZkFwIHmuexOmrEWIzM966H4xu17NT4AqZGfCutj" style="box-sizing: border-box; border-style: none; padding: 0px 1px; max-width: calc(100% - 5px); min-width: 5px;">&nbsp;</span></b><span style="color: rgb(0, 0, 0);"><a href="https://www.aliceblueonline.com/" rel="noopener" target="_blank" style="box-sizing: border-box; color: rgb(17, 85, 204); text-decoration: underline; font-family: tahoma, sans-serif;">www.aliceblueonline.com</a></span><br><a href="mailto:occurrence@aliceblueindia.com"><span style="color: rgb(0, 0, 0); font-size: small;">occurrence@aliceblueindia.com</span></a></td>
+                </tr>
+            </tbody>
+        </table>
     </div>
-    
-    <hr style="border: 0; border-top: 1px solid #eeeeee; margin-top: 30px; margin-bottom: 20px;">
-    
-    <!-- Custom Corporate Signature -->
-    <table style="box-sizing: border-box; border-collapse: collapse; caption-side: bottom; border: 1px solid rgb(221, 221, 221); empty-cells: show; max-width: 100%; font-size: 14px; font-family: Arial; color: rgb(65, 65, 65); background-color: rgb(255, 255, 255); width: 557.656px;">
-        <tbody>
-            <tr>
-                <td style="box-sizing: border-box; border: 1px solid rgb(221, 221, 221); min-width: 5px; width: 313.976px;"><img src="https://ci3.googleusercontent.com/mail-sig/AIorK4wGFAUAtrdZEe9R2RlbmbRzH4Jx9FA0sX5D8Y6FLVxFfeuGhfDbLk9XD4VFw7eJLnkYrC2HQTVgYqOF" style="width: 300px;"></td>
-                <td style="box-sizing: border-box; border: 1px solid rgb(221, 221, 221); min-width: 5px; width: 242.569px; vertical-align: middle; padding-left: 10px;"><span style="box-sizing: border-box; font-family: Ubuntu, sans-serif;"><span style="box-sizing: border-box; font-size: 20px; color: rgb(0, 0, 0);"><strong style="box-sizing: border-box; font-weight: 700;">SSO-TEAM</strong></span></span><br><span style="box-sizing: border-box; font-family: Poppins, sans-serif; font-size: 20px; color: rgb(74, 74, 74);">IT-DEPARTMENT</span><br><b style="box-sizing: border-box; font-weight: bolder; color: rgb(34, 34, 34); font-size: large; font-family: Arial;"><span style="color: rgb(0, 0, 0);"><img src="https://ci3.googleusercontent.com/mail-sig/AIorK4xuz4WgqtqL4VaddOC37AYma6ytFElvidGL7Lb1BZkFwIHmuexOmrEWIzM966H4xu17NT4AqZGfCutj" style="box-sizing: border-box; border-style: none; padding: 0px 1px; max-width: calc(100% - 5px); min-width: 5px;">&nbsp;</span></b><span style="color: rgb(0, 0, 0);"><a href="https://www.aliceblueonline.com/" rel="noopener" target="_blank" style="box-sizing: border-box; color: rgb(17, 85, 204); text-decoration: underline; font-family: tahoma, sans-serif;">www.aliceblueonline.com</a></span><br><a href="mailto:occurrence@aliceblueindia.com"><span style="color: rgb(0, 0, 0); font-size: small;">occurrence@aliceblueindia.com</span></a></td>
-            </tr>
-        </tbody>
-    </table>
 </body>
 </html>
 EOM
@@ -193,12 +191,7 @@ EOM
     else
         # Account is Passed and Securely within limits -> Add to Compliant list rows
         ((COMPLIANT_COUNT++))
-        COMPLIANT_TABLE_ROWS+="<tr>
-            <td style='padding: 8px; border: 1px solid #ddd; color: #555;'>$DISPLAY_NAME</td>
-            <td style='padding: 8px; border: 1px solid #ddd; font-family: monospace; color: #555;'>$USER</td>
-            <td style='padding: 8px; border: 1px solid #ddd; color: #28a745;'>Active ($DAYS_LEFT days left)</td>
-            <td style='padding: 8px; border: 1px solid #ddd;'><span style='background-color: #28a745; color: white; padding: 2px 6px; font-size: 11px; font-weight: bold; border-radius: 3px;'>PASSED</span></td>
-        </tr>"
+        COMPLIANT_TABLE_ROWS+="<tr><td style='padding:8px;border:1px solid #ddd;color:#555;'>$DISPLAY_NAME</td><td style='padding:8px;border:1px solid #ddd;font-family:monospace;color:#555;'>$USER</td><td style='padding:8px;border:1px solid #ddd;color:#28a745;'>Active ($DAYS_LEFT days left)</td><td style='padding:8px;border:1px solid #ddd;'><span style='background-color:#28a745;color:white;padding:2px 6px;font-size:11px;font-weight:bold;border-radius:3px;'>PASSED</span></td></tr>"
     fi
 
 done < <(awk -F: '($3 == 0 || $3 >= 1000) && $1 != "nobody" {print $1}' /etc/passwd)
@@ -215,7 +208,7 @@ else
     # Build Flagged Account Matrix Table
     read -r -d '' FLAGGED_SECTION <<EOM
     <h3 style="color: #d9534f; margin-top: 25px; margin-bottom: 10px;">⚠️ Action Required Profiles</h3>
-    <table style="border-collapse: collapse; width: 100%; max-width: 700px; margin-bottom: 20px;">
+    <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
         <thead>
             <tr style="background-color: #f2f2f2; text-align: left;">
                 <th style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Employee Name</th>
@@ -235,51 +228,53 @@ fi
 read -r -d '' ADMIN_BODY <<EOM
 <html>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333;">
-    <div style="background-color: $DIGEST_COLOR; color: white; padding: 15px; font-size: 18px; font-weight: bold; border-radius: 4px;">
-        $DIGEST_BANNER_TEXT
+    <div style="max-width: 700px; margin: 0 auto; width: 100%;">
+        <div style="background-color: $DIGEST_COLOR; color: white; padding: 15px; font-size: 18px; font-weight: bold; border-radius: 4px;">
+            $DIGEST_BANNER_TEXT
+        </div>
+        <p>Dear Team,</p>
+        <p>Automated infrastructure scans have compiled the periodic credential verification cycle records for this host node.</p>
+        
+        <table style="border-collapse: collapse; width: 100%; margin-bottom: 25px; margin-top: 15px;">
+            <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; width: 35%;">Target Host Name:</td><td style="padding: 8px; border: 1px solid #ddd;">$HOSTNAME</td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Host IP Address:</td><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">$HOST_IP</td></tr>
+            <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; width: 35%;">Total Flagged Profiles:</td><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; color: #d9534f;">$ALERT_COUNT</td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Total Compliant Profiles:</td><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; color: #28a745;">$COMPLIANT_COUNT</td></tr>
+        </table>
+
+        $FLAGGED_SECTION
+
+        <h3 style="color: #28a745; margin-top: 30px; margin-bottom: 10px;">🟢 Compliant System Profiles</h3>
+        <table style="border-collapse: collapse; width: 100%; margin-bottom: 25px;">
+            <thead>
+                <tr style="background-color: #f2f2f2; text-align: left;">
+                    <th style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Employee Name</th>
+                    <th style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Account ID</th>
+                    <th style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Policy Timeline</th>
+                    <th style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                $COMPLIANT_TABLE_ROWS
+            </tbody>
+        </table>
+
+        <div style="background-color: #fcf8e3; color: #8a6d3b; padding: 15px; border-left: 4px solid #f0ad4e; margin: 20px 0 0 0; width: 100%; box-sizing: border-box;">
+            <p style="margin: 0; font-size: 14px;"><strong>Operational Reminder:</strong> Flagged credential validation exceptions represent potential security policy gaps or imminent user lockouts. Please ensure all warning and urgent status profiles are actively evaluated and resolved as soon as possible to maintain infrastructure operational continuity.</p>
+        </div>
+    
+        <hr style="border: 0; border-top: 1px solid #eeeeee; margin-top: 30px; margin-bottom: 20px;">
+        
+        <!-- Custom Corporate Signature -->
+        <table style="box-sizing: border-box; border-collapse: collapse; caption-side: bottom; border: 1px solid rgb(221, 221, 221); empty-cells: show; max-width: 100%; font-size: 14px; font-family: Arial; color: rgb(65, 65, 65); background-color: rgb(255, 255, 255); width: 100%;">
+            <tbody>
+                <tr>
+                    <td style="box-sizing: border-box; border: 1px solid rgb(221, 221, 221); min-width: 5px; width: 50%;"><img src="https://ci3.googleusercontent.com/mail-sig/AIorK4wGFAUAtrdZEe9R2RlbmbRzH4Jx9FA0sX5D8Y6FLVxFfeuGhfDbLk9XD4VFw7eJLnkYrC2HQTVgYqOF" style="width: 300px;"></td>
+                    <td style="box-sizing: border-box; border: 1px solid rgb(221, 221, 221); min-width: 5px; width: 50%; vertical-align: middle; padding-left: 10px;"><span style="box-sizing: border-box; font-family: Ubuntu, sans-serif;"><span style="box-sizing: border-box; font-size: 20px; color: rgb(0, 0, 0);"><strong style="box-sizing: border-box; font-weight: 700;">SSO-TEAM</strong></span></span><br><span style="box-sizing: border-box; font-family: Poppins, sans-serif; font-size: 20px; color: rgb(74, 74, 74);">IT-DEPARTMENT</span><br><b style="box-sizing: border-box; font-weight: bolder; color: rgb(34, 34, 34); font-size: large; font-family: Arial;"><span style="color: rgb(0, 0, 0);"><img src="https://ci3.googleusercontent.com/mail-sig/AIorK4xuz4WgqtqL4VaddOC37AYma6ytFElvidGL7Lb1BZkFwIHmuexOmrEWIzM966H4xu17NT4AqZGfCutj" style="box-sizing: border-box; border-style: none; padding: 0px 1px; max-width: calc(100% - 5px); min-width: 5px;">&nbsp;</span></b><span style="color: rgb(0, 0, 0);"><a href="https://www.aliceblueonline.com/" rel="noopener" target="_blank" style="box-sizing: border-box; color: rgb(17, 85, 204); text-decoration: underline; font-family: tahoma, sans-serif;">www.aliceblueonline.com</a></span><br><a href="mailto:occurrence@aliceblueindia.com"><span style="color: rgb(0, 0, 0); font-size: small;">occurrence@aliceblueindia.com</span></a></td>
+                </tr>
+            </tbody>
+        </table>
     </div>
-    <p>Dear Admin Team,</p>
-    <p>Automated infrastructure scans have compiled the periodic credential verification cycle records for this host node.</p>
-    
-    <table style="border-collapse: collapse; width: 100%; max-width: 600px; margin-bottom: 25px; margin-top: 15px;">
-        <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; width: 35%;">Target Host Name:</td><td style="padding: 8px; border: 1px solid #ddd;">$HOSTNAME</td></tr>
-        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Host IP Address:</td><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">$HOST_IP</td></tr>
-        <tr style="background-color: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; width: 35%;">Total Flagged Profiles:</td><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; color: #d9534f;">$ALERT_COUNT</td></tr>
-        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Total Compliant Profiles:</td><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; color: #28a745;">$COMPLIANT_COUNT</td></tr>
-    </table>
-
-    $FLAGGED_SECTION
-
-    <h3 style="color: #28a745; margin-top: 30px; margin-bottom: 10px;">🟢 Compliant System Profiles</h3>
-    <table style="border-collapse: collapse; width: 100%; max-width: 700px; margin-bottom: 25px;">
-        <thead>
-            <tr style="background-color: #f2f2f2; text-align: left;">
-                <th style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Employee Name</th>
-                <th style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Account ID</th>
-                <th style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Policy Timeline</th>
-                <th style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            $COMPLIANT_TABLE_ROWS
-        </tbody>
-    </table>
-
-    <div style="background-color: #fcf8e3; color: #8a6d3b; padding: 15px; border-left: 4px solid #f0ad4e; margin: 20px 0; max-width: 700px;">
-        <p style="margin: 0; font-size: 14px;"><strong>Operational Reminder:</strong> Flagged credential validation exceptions represent potential security policy gaps or imminent user lockouts. Please ensure all warning and urgent status profiles are actively evaluated and resolved as soon as possible to maintain infrastructure operational continuity.</p>
-    </div>
-    
-    <hr style="border: 0; border-top: 1px solid #eeeeee; margin-top: 30px; margin-bottom: 20px;">
-    
-    <!-- Custom Corporate Signature -->
-    <table style="box-sizing: border-box; border-collapse: collapse; caption-side: bottom; border: 1px solid rgb(221, 221, 221); empty-cells: show; max-width: 100%; font-size: 14px; font-family: Arial; color: rgb(65, 65, 65); background-color: rgb(255, 255, 255); width: 557.656px;">
-        <tbody>
-            <tr>
-                <td style="box-sizing: border-box; border: 1px solid rgb(221, 221, 221); min-width: 5px; width: 313.976px;"><img src="https://ci3.googleusercontent.com/mail-sig/AIorK4wGFAUAtrdZEe9R2RlbmbRzH4Jx9FA0sX5D8Y6FLVxFfeuGhfDbLk9XD4VFw7eJLnkYrC2HQTVgYqOF" style="width: 300px;"></td>
-                <td style="box-sizing: border-box; border: 1px solid rgb(221, 221, 221); min-width: 5px; width: 242.569px; vertical-align: middle; padding-left: 10px;"><span style="box-sizing: border-box; font-family: Ubuntu, sans-serif;"><span style="box-sizing: border-box; font-size: 20px; color: rgb(0, 0, 0);"><strong style="box-sizing: border-box; font-weight: 700;">SSO-TEAM</strong></span></span><br><span style="box-sizing: border-box; font-family: Poppins, sans-serif; font-size: 20px; color: rgb(74, 74, 74);">IT-DEPARTMENT</span><br><b style="box-sizing: border-box; font-weight: bolder; color: rgb(34, 34, 34); font-size: large; font-family: Arial;"><span style="color: rgb(0, 0, 0);"><img src="https://ci3.googleusercontent.com/mail-sig/AIorK4xuz4WgqtqL4VaddOC37AYma6ytFElvidGL7Lb1BZkFwIHmuexOmrEWIzM966H4xu17NT4AqZGfCutj" style="box-sizing: border-box; border-style: none; padding: 0px 1px; max-width: calc(100% - 5px); min-width: 5px;">&nbsp;</span></b><span style="color: rgb(0, 0, 0);"><a href="https://www.aliceblueonline.com/" rel="noopener" target="_blank" style="box-sizing: border-box; color: rgb(17, 85, 204); text-decoration: underline; font-family: tahoma, sans-serif;">www.aliceblueonline.com</a></span><br><a href="mailto:occurrence@aliceblueindia.com"><span style="color: rgb(0, 0, 0); font-size: small;">occurrence@aliceblueindia.com</span></a></td>
-            </tr>
-        </tbody>
-    </table>
 </body>
 </html>
 EOM
