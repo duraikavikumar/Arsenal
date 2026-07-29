@@ -75,6 +75,8 @@ TOTAL_CHECKED_USERS=0
 TOTAL_FLAGGED_ALERTS=0
 TOTAL_COMPLIANT_USERS=0
 FLEET_DASHBOARD_HTML=""
+MAIL_DELIVERY_ERRORS_HTML=""
+TOTAL_DELIVERY_FAILURES=0
 
 HIGHEST_SEVERITY="OK"
 DIGEST_EMOJI="🟢"
@@ -290,6 +292,10 @@ for NODE_PROFILE in "${PROD_FLEET[@]}"; do
                     echo "    [ROUTING STATUS]  : SKIPPED (Cannot dispatch email, GECOS metadata field empty)"
                     echo "------------------------------------------------------------"
                 } >> "$HUB_LOG"
+                
+                # Dynamic tracker for missing contact definitions added to Admin Digest payload
+                ((TOTAL_DELIVERY_FAILURES++))
+                MAIL_DELIVERY_ERRORS_HTML+="<tr><td style='padding:8px;border:1px solid #ddd;font-family:monospace;'>$USER</td><td style='padding:8px;border:1px solid #ddd;'>$DISPLAY_HOST</td><td style='padding:8px;border:1px solid #ddd;color:#d9534f;font-weight:bold;'>Missing GECOS Email Attribute</td></tr>"
             else
                 echo "    [ROUTING STATUS]  : ATTEMPTING DELIVERY" >> "$HUB_LOG"
                 MAIL_ERROR=$(mktemp)
@@ -335,7 +341,7 @@ EOM
                 if timeout 20 mail \
                     -a "MIME-Version: 1.0" \
                     -a "Content-Type: text/html; charset=UTF-8" \
-                    -a "From: SSO-Team <$VERIFIED_SENDER>" \
+                    -a "From: IT-Team <$VERIFIED_SENDER>" \
                     -r "$VERIFIED_SENDER" \
                     -s "$EMOJI $SUBJECT_LINE" \
                     "$USER_EMAIL" <<< "$USER_BODY" \
@@ -345,6 +351,11 @@ EOM
                 else
                     echo "    [ROUTING STATUS]  : SMTP FAILED" >> "$HUB_LOG"
                     cat "$MAIL_ERROR" >> "$HUB_LOG"
+                    
+                    # Track SMTP network routing transactional blocks to the admin panel
+                    ((TOTAL_DELIVERY_FAILURES++))
+                    SMTP_ERR_MSG=$(cat "$MAIL_ERROR")
+                    MAIL_DELIVERY_ERRORS_HTML+="<tr><td style='padding:8px;border:1px solid #ddd;font-family:monospace;'>$USER</td><td style='padding:8px;border:1px solid #ddd;'>$DISPLAY_HOST</td><td style='padding:8px;border:1px solid #ddd;color:#d9534f;font-weight:bold;'>SMTP Error: $(escape_html "$SMTP_ERR_MSG")</td></tr>"
                 fi
 
                 rm -f "$MAIL_ERROR"
@@ -431,6 +442,29 @@ log_hub "INFO" "================================================================
 
 ADMIN_SUBJECT="⚙️ SYSTEM FLEET DIGEST: [$HIGHEST_SEVERITY] Password Expiry Report Matrix"
 
+# Assemble Delivery Failure Warning Component if exceptions were generated
+DELIVERY_ALERT_PANEL_HTML=""
+if [ "$TOTAL_DELIVERY_FAILURES" -gt 0 ]; then
+    read -r -d '' DELIVERY_ALERT_PANEL_HTML <<HTML
+    <div style="border: 1px solid #ebccd1; background-color: #f2dede; color: #a94442; padding: 15px; margin-top: 20px; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+        <h3 style="margin-top: 0; color: #a94442;">🚨 OUTBOUND USER DELIVERY FAILURES ALERT ($TOTAL_DELIVERY_FAILURES)</h3>
+        <p style="font-size: 14px; margin-bottom: 10px;">The following password alerts were flagged for transmission but could not be routed to the respective end-user accounts:</p>
+        <table style="border-collapse: collapse; width: 100%; font-size: 13px; background-color: #ffffff; color: #333;">
+            <thead>
+                <tr style="background-color: #f5e7e8; text-align: left; border-bottom: 2px solid #d9534f;">
+                    <th style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Account ID</th>
+                    <th style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Server Host</th>
+                    <th style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Failure Diagnosis Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                $MAIL_DELIVERY_ERRORS_HTML
+            </tbody>
+        </table>
+    </div>
+HTML
+fi
+
 # ========================================================================
 # PLAIN-TEXT AUDIT LOG FOR MASTER ADMIN DIGEST
 # ========================================================================
@@ -442,6 +476,7 @@ ADMIN_SUBJECT="⚙️ SYSTEM FLEET DIGEST: [$HIGHEST_SEVERITY] Password Expiry R
     echo "                        : Monitored Accounts: $TOTAL_CHECKED_USERS"
     echo "                        : Compliant Profiles: $TOTAL_COMPLIANT_USERS"
     echo "                        : Flagged Anomalies: $TOTAL_FLAGGED_ALERTS"
+    echo "                        : Delivery Failures: $TOTAL_DELIVERY_FAILURES"
     echo "    [HIGHEST SEVERITY]  : $HIGHEST_SEVERITY"
     echo "============================================================"
 } >> "$HUB_LOG"
@@ -455,8 +490,11 @@ read -r -d '' ADMIN_BODY <<EOM
             $DIGEST_BANNER_TEXT
         </div>
         
+        <!-- Outbound Failure Alert Container Block Injection -->
+        $DELIVERY_ALERT_PANEL_HTML
+        
         <p style="margin-top: 15px;">Dear Team,</p>
-        <p>Automated orchestration infrastructure scans have compiled the password lifecycle tracking records for all active local nodes across the management fleet.</p>
+        <p>Automated infrastructure scans have compiled the password lifecycle tracking records for all active local users across all the prod servers.</p>
         
         <table style="border-collapse: collapse; width: 100%; margin-bottom: 25px; margin-top: 15px; background-color: #ffffff; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
             <tr style="background-color: #f9f9f9;"><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold; width: 40%;">Managed Network Nodes:</td><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold; color: #0056b3;">$TOTAL_NODES Servers Scanned</td></tr>
@@ -504,7 +542,7 @@ echo "$ADMIN_BODY" > "$TEMP_MAIL_BODY"
 IFS=',' read -r -a RECIPIENT_ARRAY <<< "$ADMIN_EMAILS"
 if timeout 20 mail -a "MIME-Version: 1.0" \
         -a "Content-Type: text/html; charset=UTF-8" \
-        -a "From: SSO-Team <$VERIFIED_SENDER>" \
+        -a "From: IT-Team <$VERIFIED_SENDER>" \
         -r "$VERIFIED_SENDER" \
         -s "$DIGEST_EMOJI $ADMIN_SUBJECT" "${RECIPIENT_ARRAY[@]}" < "$TEMP_MAIL_BODY"; then
     log_hub "INFO" "Consolidated fleet orchestration report successfully dispatched to admin team."
