@@ -6,7 +6,7 @@
 # ========================================================================
 
 # Global Configuration
-ADMIN_EMAILS="duraikavikumar@aliceblueindia.com"
+ADMIN_EMAILS="duraikavikumar@aliceblueindia.com" # multiple recipients can be comma-separated, e.g., "user1@domain.com,user2@domain.com"
 VERIFIED_SENDER="notification@aliceblueindia.com"
 HUB_LOG="/var/log/central_password_expiry.log"
 TODAY=$(date +%s)
