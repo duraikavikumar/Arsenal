@@ -114,3 +114,8 @@ Read Input from a File (Null-Separated)
 
 bash
 du --files0-from=file_list.txt
+
+
+du -ch /path/to/dir
+gives size for each files and grand total at the end
+
