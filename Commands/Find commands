@@ -1,0 +1,50 @@
+### Find commands
+
+# To list files modified within the last 6 days
+```bash
+find . -type f -mtime -6
+```
+• . : Searches inside the current directory and all of its subdirectories.
+• -type f : Restricts the search to files only (excluding directories).
+• -mtime -6 : Filters for files modified less than 6 days ago (the minus sign indicates "less than").
+
+1. Automating Cleanup & Maintenance
+Instead of just listing files, you can use the -exec flag or xargs to automatically take action on them.
+• Delete logs older than 30 days:
+```bash
+find /var/log -type f -mtime +30 -name "*.log" -delete
+```
+• Archive recent work: Compress files modified within the last 7 days into a backup tarball:
+```bash
+find . -type f -mtime -7 -exec tar -rvf backup.tar {} +
+```
+2. Troubleshooting & Security Auditing
+When an application breaks unexpectedly, you often need to find out exactly what changed and when.
+• Identify files changed in the last 60 minutes: Use -mmin (modification time in minutes) to catch immediate, recent changes:
+```bash
+find . -type f -mmin -60
+```
+• Detect files accessed but not changed: If you suspect data leakage or want to see what configuration files a process read in the last 24 hours, use -atime (access time):
+```bash
+find /etc -type f -atime -1
+```
+• Find files with permission or ownership changes: Use -ctime (change time) to track metadata modifications (like changing file permissions via chmod):
+```bash
+find . -type f -ctime -3
+```
+3. Date Ranges & Comparative Searches
+You don't have to limit your search to a single threshold. You can combine operators to isolate specific brackets of time.
+• Find files modified within a tight window: Find files that are older than 2 days but newer than 7 days:
+```bash
+find . -type f -mtime +2 -mtime -7
+```
+• Compare against a reference file: Find any file modified more recently than a specific reference file (e.g., your last known stable deployment file):
+```bash
+find . -type f -newer reference_deploy.txt
+```
+Quick Reference Table
+Flag	Tracks	Scale	Example	Meaning
+-mtime	Content Modifications	Days	-mtime +5	Modified more than 5 days ago
+-mmin	Content Modifications	Minutes	-mmin -15	Modified less than 15 minutes ago
+-atime	File Read/Access	Days	-atime -2	Accessed within the last 48 hours
+-ctime	Metadata Changes (Permissions/Name)	Days	-ctime -1	Metadata changed within the last 24 hours
