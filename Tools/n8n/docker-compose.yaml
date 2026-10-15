@@ -1,0 +1,62 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.42.4   # pin: 2.42.4@sha256:<digest> after scanning
+    container_name: n8n
+    restart: unless-stopped
+    user: "1006:1006"
+    env_file:
+      - .env
+    networks:
+      n8n_net:
+        ipv4_address: 172.28.10.20
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      - HOME=/home/node
+      - N8N_USER_FOLDER=/home/node
+      - N8N_PATH=/n8n/
+      - N8N_HOST=crm-dev.aliceblueonline.com
+      - N8N_PROTOCOL=https
+      - N8N_EDITOR_BASE_URL=https://crm-dev.aliceblueonline.com/n8n/
+      - WEBHOOK_URL=https://crm-dev.aliceblueonline.com/n8n/
+      - N8N_PROXY_HOPS=1
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=${DB_POSTGRESDB_HOST}
+      - DB_POSTGRESDB_PORT=${DB_POSTGRESDB_PORT}
+      - DB_POSTGRESDB_DATABASE=${DB_POSTGRESDB_DATABASE}
+      - DB_POSTGRESDB_USER=${DB_POSTGRESDB_USER}
+      - DB_POSTGRESDB_PASSWORD=${DB_POSTGRESDB_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - GENERIC_TIMEZONE=Asia/Kolkata
+      - TZ=Asia/Kolkata
+      - NODES_EXCLUDE=["n8n-nodes-base.executeCommand","n8n-nodes-base.localFileTrigger","n8n-nodes-base.readWriteFile","n8n-nodes-base.ssh"]
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+      - N8N_COMMUNITY_PACKAGES_ENABLED=false
+      - N8N_TEMPLATES_ENABLED=false
+      - N8N_PUBLIC_API_DISABLED=true
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+      - N8N_LOG_LEVEL=info
+      - N8N_LOG_OUTPUT=console
+      - N8N_LOG_FORMAT=json
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    volumes:
+      - /var/www/n8n/data:/home/node
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  n8n_net:
+    external: true
