@@ -1,0 +1,120 @@
+Zstd compression
+
+Installation if not present
+apt update && apt install -y zstd
+
+
+To view the contents of the compressed files
+zstdcat wp-debug-2026-05-01.log.zst | head -n 5
+
+
+To search characters inside the compressed files
+zstdgrep "PHP Fatal error" wp-debug-*.log.zst
+
+
+Decompress a single file if needed:
+unzstd wp-debug-2026-05-01.log.zst
+
+
+Benchmark Without Saving to Disk (Fastest)
+zstd -b3 /path/to/sample.log
+
+The built-in benchmark flag (-b) reads the file, tests compression and decompression speeds in memory, and prints the exact compression ratio and throughput (MB/s).
+
+ zstd -b3 2026-05-03.log
+ 3#2026-05-03.log    : 895608980 ->  54209642 (x16.52),  779.2 MB/s, 3022.1 MB/s
+
+
+Alternatively, to test piped streaming:
+# Check compression ratio via pipe without writing to disk
+cat /path/to/sample.log | zstd -3 -c | wc -c
+
+
+Test a Small Sample Chunk First
+Extract a 1GB or 2GB slice of the file to inspect the real .zst file output:
+
+# 1. Grab the first 2GB of the log
+head -c 2G /path/to/sample.log > test_chunk.log
+
+# 2. Compress with zstd
+zstd -3 test_chunk.log -o test_chunk.log.zst
+
+# 3. Compare sizes
+ls -lh test_chunk.log test_chunk.log.zst
+
+
+Side-by-Side Test (zstd vs gzip)
+To see the difference in both time and compressed size on your specific hardware:
+
+
+# Time and test gzip
+time gzip -c test_chunk.log > test_chunk.log.gz
+
+# Time and test zstd
+time zstd -3 -c test_chunk.log > test_chunk.log.zst
+
+# View size difference
+ls -lh test_chunk.log*
+
+
+1. Compress an Entire Directory
+using Modern tar (Ubuntu 20.04+)
+Modern versions of tar have built-in support for --zstd:
+tar --zstd -cvf archive_name.tar.zst /path/to/directory
+
+Pipe Method (Control CPU Threads & Compression Level)
+If you want multi-threading or a specific compression level:
+
+tar -cf - /path/to/directory | zstd -3 -T0 -o archive_name.tar.zst
+
+-3: Compression level.
+
+-T0: Uses all available CPU cores automatically.
+
+
+2. Decompress / Extract the Archive
+
+# Direct extraction
+tar --zstd -xvf archive_name.tar.zst
+
+# Or extract to a specific target folder
+tar --zstd -xvf archive_name.tar.zst -C /path/to/destination/
+
+
+3. List Contents Without Extracting
+
+tar --zstd -tvf archive_name.tar.zst
+
+
+
+How to View & Search Inside .tar.zst Archives
+1. View a Specific File Inside the Archive
+Extract the file directly to stdout (-O) without touching the disk:
+
+
+# View first 10 lines of a specific file inside the tarball
+tar --zstd -xOf archive.tar.zst path/to/file.log | head -n 10
+
+
+2. Grep Across All Files Inside the Archive
+Stream the uncompressed tar content through tar to stdout, then pipe to grep:
+
+# Grep through the entire archive stream
+tar --zstd -xOf archive.tar.zst | grep "PHP Fatal error"
+
+Note: -O merges all file streams together, so standard grep won't tell you which specific filename matched.
+
+
+3. Grep Inside a Specific File Inside the Archive
+tar --zstd -xOf archive.tar.zst path/to/wp-debug-2026-05-01.log | grep "PHP Fatal error"
+
+4. List File Names First
+
+tar --zstd -tf archive.tar.zst | grep "2026-05"
+
+
+# Test a Gzip archive for integrity errors
+gzip -t archive.tar.gz
+
+# Test a Zstd archive for integrity errors
+zstd -t archive.tar.zst
