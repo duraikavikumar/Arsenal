@@ -49,3 +49,31 @@ rsync -aogpvz --progress --human-readable -e "ssh" --rsync-path="sudo rsync" /ho
 
 
   This will simulate the sync without copying anything.
+
+
+rsync -aogpvz --progress --human-readable -e "ssh" --rsync-path="sudo rsync" /var/www/EKYCV3/EKYC_V3_BACKEND/EKYCV3-BACKADMIN nallen@10.13.68.91:/var/www/EKYCV3/EKYC_V3_BACKEND/
+
+
+
+rsync -aogpvz --progress --human-readable -e "ssh" --rsync-path="sudo rsync" /var/www/EKYCV3/EKYC_V3_BACKEND/EKYC-V3-Back/storage/app/public/bot/bank_proof/* nallen@10.13.68.43:/var/www/BOT/BOT_GOLANG/storage/app/public/bot/bank_proof
+
+
+rsync -aogpvz --progress --human-readable -e "ssh" --rsync-path="sudo rsync" //var/www/EKYCV3/EKYC_V3_BACKEND/EKYC-V3-Back/storage/app/public/bot/financial_proof/* nallen@10.13.68.43:/var/www/BOT/BOT_GOLANG/storage/app/public/bot/financial_proof/
+
+
+rsync -avz --progress -h -e "ssh" --rsync-path="sudo rsync" /var/www/EKYCV3/EKYC_V3_BACKEND/EKYC-V3-Back/storage/app/public/bot/financial_proof/ nallen@10.13.68.43:/var/www/BOT/BOT_GOLANG/storage/app/public/bot/financial_proof/
+
+rsync -aogpvz --progress --human-readable -e "ssh" --rsync-path="sudo rsync" /var/www/EKYCV3/EKYC_V3_BACKEND/EKYC-V3-Back/storage/app/public/bot/nominee/optin/before_sign/* nallen@10.13.68.43:/var/www/BOT/BOT_GOLANG/storage/app/public/bot/nominee/optin/before_sign/
+
+
+rsync -aogpvz --progress --human-readable -e "ssh" --rsync-path="sudo rsync" /var/www/EKYCV3/EKYC_V3_BACKEND/EKYC-V3-Back/storage/app/public/bot/nominee/optin/after_sign/* nallen@10.13.68.43:/var/www/BOT/BOT_GOLANG/storage/app/public/bot/nominee/optin/after_sign/
+
+rsync -aogpvz --progress --human-readable -e "ssh" --rsync-path="sudo rsync" /var/www/EKYCV3/EKYC_V3_BACKEND/EKYC-V3-Back/storage/app/public/ddpi/ nallen@10.13.68.43:/var/www/BOT/BOT_GOLANG/storage/app/public/ddpi
+
+
+rsync -aogpvz --progress --human-readable -e "ssh" --rsync-path="sudo rsync" /var/www/EKYCV3/EKYC_V3_BACKEND/EKYC-V3-Back/storage/app/public/account_closure/ nallen@10.13.68.43:/var/www/BOT/BOT_GOLANG/storage/app/public/account_closure
+
+
+rsync -aogpvz --progress --human-readable -e "ssh -p 20202" --rsync-path="sudo rsync" /home/audit/falcon-sensor_7.36.0-18909_amd64.deb audit@10.194.6.23:/home/audit/
+
+rsync -aogpvz --progress --human-readable -e "ssh" --rsync-path="sudo rsync" /etc/ssl/certs/domain.tld.key nallen@10.13.68.94:/etc/ssl/certs/
